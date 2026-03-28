@@ -7,24 +7,33 @@ st.set_page_config(layout="wide", page_title="Dashboard de Descarga")
 # 1. Função para formatar moeda no padrão Brasileiro
 def formatar_moeda(valor):
     try:
+        if pd.isna(valor): return "R$ 0,00"
         texto = f"{valor:,.2f}"
         texto = texto.replace(",", "X").replace(".", ",").replace("X", ".")
         return f"R$ {texto}"
     except:
         return "R$ 0,00"
 
-# 2. Função para carregar os dados (CORRIGIDA COM ENCODING LATIN-1)
+# 2. Função para carregar e LIMPAR os dados
 @st.cache_data
 def load_data():
     try:
-        # Adicionamos encoding='latin-1' para aceitar acentos do Excel (Ex: "Promoção")
+        # Lendo com latin-1 para evitar erro de acentuação
         df_f = pd.read_csv("Faturamento.csv", sep=";", encoding='latin-1') 
         df_v = pd.read_csv("Vendedores.csv", sep=";", encoding='latin-1')
         
-        # Ajuste da coluna de data (Coluna de índice 9)
+        # --- LIMPEZA DE DADOS CRÍTICA ---
+        # Converte a coluna de Data (índice 9)
         df_f['DATA_FILTRO'] = pd.to_datetime(df_f.iloc[:, 9], dayfirst=True, errors='coerce')
-        df_f = df_f.dropna(subset=['DATA_FILTRO'])
         
+        # Garante que a coluna de VALOR (índice 22) e PESO (índice 26) sejam números
+        # Se houver vírgula no CSV (ex: 10,50), trocamos por ponto para o Python entender
+        for col_idx in [22, 26]:
+            col_name = df_f.columns[col_idx]
+            df_f[col_name] = df_f[col_name].astype(str).str.replace(',', '.')
+            df_f[col_name] = pd.to_numeric(df_f[col_name], errors='coerce').fillna(0)
+        
+        df_f = df_f.dropna(subset=['DATA_FILTRO'])
         return df_f, df_v
     except Exception as e:
         st.error(f"Erro ao ler os arquivos: {e}")
@@ -33,18 +42,15 @@ def load_data():
 df_fat, df_vend = load_data()
 
 if df_fat is not None:
-    # --- BARRA LATERAL (FILTROS) ---
+    # --- BARRA LATERAL ---
     with st.sidebar:
         st.header("📌 Filtros")
-        # Ajuste a data para uma que você saiba que tem dados (Ex: 26/03/2026)
         data_sel = st.date_input("Data da Descarga", value=date(2026, 3, 26), format="DD/MM/YYYY")
         
         vendedores_lista = df_vend.iloc[:, 1].dropna().unique().tolist()
         vendedores_ordenados = sorted(vendedores_lista)
         
         nome_vend = st.selectbox("Selecione o Vendedor", vendedores_ordenados)
-        
-        # Pega código e nome para busca dupla (igual ao seu VBA)
         cod_vend = str(df_vend[df_vend.iloc[:, 1] == nome_vend].iloc[0, 0]).strip()
         nome_vend_limpo = str(nome_vend).strip()
 
@@ -57,8 +63,7 @@ if df_fat is not None:
            
     df_filtrado = df_fat[mask].copy()
 
-    # --- REMOÇÃO DE DUPLICIDADES (Pelo Pedido e Nome do Produto) ---
-    # Isso garante que SKUs diferentes não sejam apagados, mas linhas repetidas do ERP sim.
+    # REMOVE DUPLICIDADES (Pelo Pedido e Nome do Produto)
     df_filtrado = df_filtrado.drop_duplicates(subset=[df_filtrado.columns[10], df_filtrado.columns[15]])
 
     # --- PARTE SUPERIOR: RESUMO ---
@@ -67,24 +72,26 @@ if df_fat is not None:
     if df_filtrado.empty:
         st.warning(f"Nenhum pedido encontrado para {nome_vend} em {data_sel.strftime('%d/%m/%Y')}")
     else:
-        # Agrupamento para a tabela de cima
         df_resumo = df_filtrado.groupby(df_filtrado.columns[10]).agg({
-            df_filtrado.columns[0]: 'first', # Cód Cliente
-            df_filtrado.columns[5]: 'first', # Cliente
-            df_filtrado.columns[22]: 'sum',  # Soma Real dos SKUs
-            df_filtrado.columns[11]: 'first', # NFe
-            df_filtrado.columns[8]: 'first'  # Hora
+            df_filtrado.columns[0]: 'first', 
+            df_filtrado.columns[5]: 'first', 
+            df_filtrado.columns[22]: 'sum',  # Valor Total do Pedido
+            df_filtrado.columns[11]: 'first', 
+            df_filtrado.columns[8]: 'first'  
         }).reset_index()
         
         df_resumo.columns = ['PEDIDO', 'COD_CLI', 'CLIENTE', 'VALOR', 'NFE', 'HORA']
 
-        # Totais (KPIs)
+        # CÁLCULO DOS TOTAIS
         v_total = df_resumo['VALOR'].sum()
         p_total = df_filtrado[df_filtrado.columns[26]].sum()
         
         c1, c2, c3 = st.columns([1, 1, 2])
         c1.metric("TOTAL VENDAS", formatar_moeda(v_total))
-        c2.metric("PESO TOTAL", f"{p_total:,.3f} kg".replace(".", ","))
+        
+        # CORREÇÃO DO ERRO: Garantimos que p_total é float e tratamos o formato com segurança
+        p_total_formatado = f"{float(p_total):,.3f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        c2.metric("PESO TOTAL", f"{p_total_formatado} kg")
 
         # Tabela Principal
         df_display = df_resumo.copy()
@@ -107,10 +114,8 @@ if df_fat is not None:
         if selecao.get("selection", {}).get("rows"):
             idx = selecao["selection"]["rows"][0]
             num_pedido = df_resumo.iloc[idx]['PEDIDO'] 
-            
             df_itens = df_filtrado[df_filtrado.iloc[:, 10] == num_pedido]
             
-            # Cabeçalho do Detalhe
             col_info1, col_info2, col_info3 = st.columns(3)
             with col_info1:
                 st.info(f"**Cliente:** {df_itens.iloc[0, 5]}\n\n**Pedido:** {num_pedido}")
@@ -120,11 +125,10 @@ if df_fat is not None:
                 val_ped = df_itens.iloc[:, 22].sum()
                 st.success(f"**Total Pedido:** {formatar_moeda(val_ped)}")
 
-            # Tabela de Itens
             df_det = df_itens.iloc[:, [13, 15, 7, 19, 20, 22, 26, 14]].copy()
             df_det.columns = ['CÓDIGO', 'PRODUTO', 'FABRICANTE', 'CX', 'UN', 'VALOR', 'PESO', 'EAN']
             df_det['VALOR'] = df_det['VALOR'].apply(formatar_moeda)
             
             st.dataframe(df_det, hide_index=True, use_container_width=True)
         else:
-            st.info("👆 Clique em uma linha da tabela de resumo para ver os produtos.")
+            st.info("👆 Clique em uma linha da tabela acima para ver os detalhes.")
