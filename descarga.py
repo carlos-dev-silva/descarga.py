@@ -15,10 +15,12 @@ def formatar_moeda(valor):
     except:
         return "R$ 0,00"
 
+# Função atualizada para ler CSV em vez de Excel
 def load_data():
     try:
-        df_f = pd.read_excel("Descargas_Teste.xlsm", sheet_name="Faturamento")
-        df_v = pd.read_excel("Descargas_Teste.xlsm", sheet_name="Vendedores")
+        # Lê os ficheiros CSV. O sep=";" é o padrão do Excel em português.
+        df_f = pd.read_csv("Faturamento.csv", sep=";") 
+        df_v = pd.read_csv("Vendedores.csv", sep=";")
         
         # Cria a coluna de data segura
         df_f['DATA_FILTRO'] = pd.to_datetime(df_f.iloc[:, 9], dayfirst=True, errors='coerce')
@@ -26,7 +28,8 @@ def load_data():
         
         return df_f, df_v
     except Exception as e:
-        st.error(f"Erro ao ler o arquivo Excel: {e}")
+        st.error(f"Erro ao ler os ficheiros CSV: {e}")
+        st.info("💡 Lembrete: Certifique-se de que salvou as abas do Excel como 'Faturamento.csv' e 'Vendedores.csv' na mesma pasta deste script.")
         return None, None
 
 df_fat, df_vend = load_data()
@@ -107,10 +110,10 @@ if df_fat is not None:
             # Filtra os produtos daquele pedido específico
             df_itens = df_filtrado[df_filtrado.iloc[:, 10] == num_pedido]
             
-            # --- CABEÇALHO DO DETALHE DO PEDIDO (IGUAL AO SEU EXCEL) ---
+            # --- CABEÇALHO DO DETALHE DO PEDIDO ---
             # Extraindo variáveis para o cabeçalho
             cliente = df_itens.iloc[0, 5]
-            # No seu VBA, Coligação estava na coluna G (índice 6)
+            # Coligação (índice 6)
             coligacao = df_itens.iloc[0, 6] 
             if pd.isna(coligacao) or str(coligacao).strip() == "" or coligacao == 0:
                 coligacao = "NÃO TEM COLIGAÇÃO"
