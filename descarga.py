@@ -10,11 +10,12 @@ def formatar_moeda(valor):
     try:
         val = float(valor)
         if val == 0: return "R$ 0,00"
-        return f"{val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        # Formata o número e inverte os sinais para o padrão BR
+        return f"R$ {val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     except:
-        return "0,00"
+        return "R$ 0,00"
 
-# 2. FUNÇÃO MESTRA DE LIMPEZA NUMÉRICA
+# 2. FUNÇÃO DE LIMPEZA NUMÉRICA (Garante que Valor e Peso funcionem)
 def limpar_para_numero(valor):
     if pd.isna(valor): return 0.0
     s = str(valor).strip().replace('R$', '').replace(' ', '')
@@ -28,9 +29,10 @@ def limpar_para_numero(valor):
     except:
         return 0.0
 
-# 3. FUNÇÃO PARA LIMPAR UNIDADES E CAIXAS (Remove o formato "contábil"/decimal)
+# 3. FUNÇÃO PARA LIMPAR UNIDADES E CAIXAS (Força número inteiro simples)
 def limpar_inteiro(valor):
-    if pd.isna(valor) or str(valor).strip() == "": return "0"
+    if pd.isna(valor) or str(valor).strip() == "" or str(valor).lower() == "nan": 
+        return "0"
     try:
         # Converte para float e depois para int para remover o .0
         return str(int(float(str(valor).replace(',', '.'))))
@@ -40,17 +42,18 @@ def limpar_inteiro(valor):
 @st.cache_data
 def load_data():
     try:
+        # Lê os CSVs do seu GitHub
         df_f = pd.read_csv("Faturamento.csv", sep=";", encoding='latin-1', dtype=str) 
         df_v = pd.read_csv("Vendedores.csv", sep=";", encoding='latin-1', dtype=str)
         
         # Limpeza de Data
         df_f['DATA_FILTRO'] = pd.to_datetime(df_f.iloc[:, 9], dayfirst=True, errors='coerce')
         
-        # Limpeza Numérica (Valor e Peso)
+        # Limpeza Numérica
         df_f['VALOR_NUM'] = df_f.iloc[:, 22].apply(limpar_para_numero)
         df_f['PESO_NUM'] = df_f.iloc[:, 26].apply(limpar_para_numero)
         
-        # --- LIMPEZA DE UNIDADES E CAIXAS (Índices 19 e 20) ---
+        # Limpeza de Unidades e Caixas (Garante que não vire contábil)
         df_f.iloc[:, 19] = df_f.iloc[:, 19].apply(limpar_inteiro)
         df_f.iloc[:, 20] = df_f.iloc[:, 20].apply(limpar_inteiro)
         
@@ -90,7 +93,7 @@ if df_fat is not None:
     df_filtrado = df_fat[mask].copy()
     df_filtrado = df_filtrado.drop_duplicates(subset=[df_filtrado.columns[10], df_filtrado.columns[15]])
 
-    # --- DASHBOARD ---
+    # --- RESUMO DOS PEDIDOS ---
     st.subheader("📋 Resumo dos Pedidos do Dia")
     
     if df_filtrado.empty:
@@ -107,12 +110,13 @@ if df_fat is not None:
 
         # KPIs
         c1, c2 = st.columns(2)
-        c1.metric("TOTAL VENDAS", f"R$ {formatar_moeda(df_resumo['VALOR'].sum())}")
+        c1.metric("TOTAL VENDAS", formatar_moeda(df_resumo['VALOR'].sum()))
         p_total = df_filtrado['PESO_NUM'].sum()
         c2.metric("PESO TOTAL", f"{p_total:,.3f} kg".replace(",", "X").replace(".", ",").replace("X", "."))
 
+        # Tabela Principal
         df_display = df_resumo.copy()
-        df_display['VALOR'] = df_display['VALOR'].apply(lambda x: f"R$ {formatar_moeda(x)}")
+        df_display['VALOR'] = df_display['VALOR'].apply(formatar_moeda)
         
         selecao = st.dataframe(
             df_display, 
@@ -132,7 +136,7 @@ if df_fat is not None:
 
         st.divider() 
 
-        # --- DETALHE ---
+        # --- DETALHE DO PEDIDO ---
         st.subheader("🔍 Detalhe do Pedido Selecionado")
         
         if selecao.get("selection", {}).get("rows"):
@@ -149,16 +153,16 @@ if df_fat is not None:
             with col_info3:
                 v_ped = df_itens['VALOR_NUM'].sum()
                 p_ped = df_itens['PESO_NUM'].sum()
-                st.success(f"**Valor:** R$ {formatar_moeda(v_ped)}\n\n**Peso:** {p_ped:,.3f} kg".replace(".", ","))
+                st.success(f"**Valor:** {formatar_moeda(v_ped)}\n\n**Peso:** {p_ped:,.3f} kg".replace(".", ","))
 
-            # Tabela de Detalhes
+            # Tabela de Detalhes (Sem EAN e com CX/UN como inteiros)
             df_det = pd.DataFrame({
                 'CÓDIGO': df_itens.iloc[:, 13],
                 'PRODUTO': df_itens.iloc[:, 15],
                 'FABRICANTE': df_itens.iloc[:, 7],
-                'CX': df_itens.iloc[:, 19], # Agora limpo como inteiro
-                'UN': df_itens.iloc[:, 20], # Agora limpo como inteiro
-                'VALOR': df_itens['VALOR_NUM'].apply(lambda x: f"R$ {formatar_moeda(x)}"),
+                'CX': df_itens.iloc[:, 19],
+                'UN': df_itens.iloc[:, 20],
+                'VALOR': df_itens['VALOR_NUM'].apply(formatar_moeda),
                 'PESO': df_itens['PESO_NUM'].apply(lambda x: f"{x:,.3f} kg".replace(".", ","))
             })
             
@@ -171,6 +175,7 @@ if df_fat is not None:
                     "PRODUTO": st.column_config.TextColumn(width="large"),
                     "FABRICANTE": st.column_config.TextColumn(width="medium"),
                     "CX": st.column_config.TextColumn(width="small"),
-                    "UN": st.column_config.TextColumn(width="small")
+                    "UN": st.column_config.TextColumn(width="small"),
+                    "VALOR": st.column_config.TextColumn(width="medium")
                 }
             )
