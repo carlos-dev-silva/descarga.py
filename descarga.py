@@ -19,30 +19,20 @@ st.markdown("""
         border-radius: 12px;
         box-shadow: 2px 2px 10px rgba(0,0,0,0.05);
     }
-    div[data-testid="stMetricLabel"] {
-        font-size: 14px !important;
-        color: #666666 !important;
-        font-weight: bold;
-    }
-    .stDownloadButton button {
-        border-radius: 8px !important;
-        border: 1px solid #d1d1d1 !important;
-    }
+    div[data-testid="stMetricLabel"] { font-size: 14px !important; color: #666666 !important; font-weight: bold; }
+    .stDownloadButton button { border-radius: 8px !important; border: 1px solid #d1d1d1 !important; }
     </style>
     """, unsafe_allow_html=True)
 
-# --- CLASSE PDF PROFISSIONAL ---
+# --- CLASSE PDF PROFISSIONAL (Ajustada para não vir em branco) ---
 class PDF(FPDF):
     def header(self):
-        try:
-            self.image('sem_fundo.png', 10, 8, 33)
-        except:
-            pass
-        self.set_font('Arial', 'B', 15)
+        try: self.image('sem_fundo.png', 10, 8, 33)
+        except: pass
+        self.set_font('Arial', 'B', 14)
         self.cell(80)
-        self.cell(30, 10, 'RELATORIO DE PERFORMANCE DE CARGA', 0, 0, 'C')
+        self.cell(30, 10, 'RELATORIO DE CARGA OPERACIONAL', 0, 0, 'C')
         self.ln(20)
-
     def footer(self):
         self.set_y(-15)
         self.set_font('Arial', 'I', 8)
@@ -64,52 +54,41 @@ def limpar_para_numero(valor):
         return float(s)
     except: return 0.0
 
-# --- MOTOR DE GERAÇÃO DE PDF ---
 def gerar_pdf_completo(df, vendedor, data_doc, faturamento, peso, qtd):
     pdf = PDF()
     pdf.add_page()
-    
-    # Box de Resumo Superior
-    pdf.set_fill_color(240, 240, 240)
     pdf.set_font('Arial', 'B', 10)
+    pdf.set_fill_color(240, 240, 240)
     pdf.cell(190, 10, f" Vendedor: {vendedor} | Data: {data_doc}", 1, 1, 'L', fill=True)
     pdf.ln(5)
-
-    # Mini KPIs no PDF
-    pdf.set_font('Arial', 'B', 11)
-    pdf.cell(63, 10, "Faturamento Total", 1, 0, 'C')
-    pdf.cell(63, 10, "Peso Total", 1, 0, 'C')
-    pdf.cell(64, 10, "Pedidos", 1, 1, 'C')
     
+    # Resumo
+    pdf.set_font('Arial', 'B', 11)
+    pdf.cell(63, 10, "Faturamento", 1, 0, 'C'); pdf.cell(63, 10, "Peso", 1, 0, 'C'); pdf.cell(64, 10, "Pedidos", 1, 1, 'C')
     pdf.set_font('Arial', '', 10)
     pdf.cell(63, 10, faturamento, 1, 0, 'C')
     pdf.cell(63, 10, f"{peso:,.2f} kg".replace(".", ","), 1, 0, 'C')
     pdf.cell(64, 10, str(qtd), 1, 1, 'C')
     pdf.ln(10)
 
-    # Cabeçalho da Tabela
-    pdf.set_fill_color(0, 51, 102) 
-    pdf.set_text_color(255, 255, 255)
-    pdf.set_font('Arial', 'B', 9)
-    pdf.cell(20, 10, "PEDIDO", 1, 0, 'C', fill=True)
-    pdf.cell(20, 10, "COD", 1, 0, 'C', fill=True)
-    pdf.cell(90, 10, "CLIENTE", 1, 0, 'C', fill=True)
-    pdf.cell(30, 10, "VALOR", 1, 0, 'C', fill=True)
-    pdf.cell(30, 10, "HORA", 1, 1, 'C', fill=True)
+    # Tabela
+    pdf.set_fill_color(0, 51, 102); pdf.set_text_color(255, 255, 255); pdf.set_font('Arial', 'B', 9)
+    cols = [("PEDIDO", 20), ("COD", 20), ("CLIENTE", 90), ("VALOR", 30), ("HORA", 30)]
+    for txt, w in cols: pdf.cell(w, 10, txt, 1, 0, 'C', fill=True)
+    pdf.ln(); pdf.set_text_color(0, 0, 0); pdf.set_font('Arial', '', 8)
 
-    # Dados da Tabela
-    pdf.set_text_color(0, 0, 0)
-    pdf.set_font('Arial', '', 8)
     for i, row in df.iterrows():
-        preenchimento = True if i % 2 == 0 else False
+        fill = i % 2 == 0
         pdf.set_fill_color(245, 245, 245)
-        pdf.cell(20, 8, str(row['PEDIDO']), 1, 0, 'C', fill=preenchimento)
-        pdf.cell(20, 8, str(row['COD_CLI']), 1, 0, 'C', fill=preenchimento)
-        pdf.cell(90, 8, str(row['CLIENTE'])[:55], 1, 0, 'L', fill=preenchimento)
-        pdf.cell(30, 8, str(row['VALOR']), 1, 0, 'C', fill=preenchimento)
-        pdf.cell(30, 8, str(row['HORA']), 1, 1, 'C', fill=preenchimento)
-        
-    return pdf.output(dest='S').encode('latin-1')
+        pdf.cell(20, 8, str(row['PEDIDO']), 1, 0, 'C', fill=fill)
+        pdf.cell(20, 8, str(row['COD_CLI']), 1, 0, 'C', fill=fill)
+        pdf.cell(90, 8, str(row['CLIENTE'])[:50], 1, 0, 'L', fill=fill)
+        pdf.cell(30, 8, str(row['VALOR']), 1, 0, 'C', fill=fill)
+        pdf.cell(30, 8, str(row['HORA']), 1, 1, 'C', fill=fill)
+    
+    # Retorno seguro como bytes
+    res = pdf.output(dest='S')
+    return res.encode('latin-1') if isinstance(res, str) else res
 
 @st.cache_data
 def load_data():
@@ -128,8 +107,7 @@ def load_data():
         df_f.iloc[:, 15] = df_f.apply(remover_fabricante, axis=1)
         return df_f.dropna(subset=['DATA_FILTRO']), df_v
     except Exception as e:
-        st.error(f"Erro: {e}")
-        return None, None
+        st.error(f"Erro: {e}"); return None, None
 
 df_fat, df_vend = load_data()
 
@@ -142,13 +120,10 @@ if df_fat is not None:
         vendedores = sorted(df_vend.iloc[:, 1].dropna().unique().tolist())
         nome_vend = st.selectbox("👤 Vendedor", vendedores)
         cod_vend = str(df_vend[df_vend.iloc[:, 1] == nome_vend].iloc[0, 0]).strip()
-        st.divider()
-        st.caption("v4.2 - CCN Intelligence")
+        st.divider(); st.caption("v4.3 - CCN Intelligence")
 
-    # Filtro Base
     mask = (df_fat['DATA_FILTRO'].dt.date == data_sel) & \
-           ((df_fat.iloc[:, 1].astype(str).str.strip() == cod_vend) | 
-            (df_fat.iloc[:, 2].astype(str).str.strip() == nome_vend))
+           ((df_fat.iloc[:, 1].astype(str).str.strip() == cod_vend) | (df_fat.iloc[:, 2].astype(str).str.strip() == nome_vend))
     
     df_filtrado = df_fat[mask].copy()
     df_filtrado = df_filtrado.drop_duplicates(subset=[df_filtrado.columns[10], df_filtrado.columns[15]])
@@ -161,93 +136,77 @@ if df_fat is not None:
         }).reset_index()
         df_resumo.columns = ['PEDIDO', 'COD_CLI', 'CLIENTE', 'VALOR', 'NFE', 'HORA', 'COLIGACAO']
 
-        # --- CABEÇALHO ---
+        # Cabeçalho
         h1, h2, h3 = st.columns([4, 1, 1])
         with h1:
             st.title("🚀 Performance de Vendas")
             st.write(f"Vendedor: **{nome_vend}** | **{data_sel.strftime('%d/%m/%Y')}**")
         
-        fat_total_str = formatar_moeda(df_resumo['VALOR'].sum())
-        peso_total = df_filtrado['PESO_NUM'].sum()
-        qtd_pedidos = len(df_resumo)
-
+        fat_tot_str = formatar_moeda(df_resumo['VALOR'].sum())
+        peso_tot = df_filtrado['PESO_NUM'].sum()
+        
         with h2:
             st.write("##")
-            output_ex = io.BytesIO()
-            with pd.ExcelWriter(output_ex, engine='xlsxwriter') as wr:
-                df_resumo[['PEDIDO', 'COD_CLI', 'CLIENTE', 'VALOR', 'NFE', 'HORA']].to_excel(wr, index=False)
-            st.download_button("📥 Excel", output_ex.getvalue(), f"Resumo_{nome_vend}.xlsx", use_container_width=True)
-        
+            out_ex = io.BytesIO()
+            df_resumo[['PEDIDO', 'COD_CLI', 'CLIENTE', 'VALOR', 'NFE', 'HORA']].to_excel(out_ex, index=False)
+            st.download_button("📥 Excel", out_ex.getvalue(), f"Resumo_{nome_vend}.xlsx", use_container_width=True)
         with h3:
             st.write("##")
-            # PDF AGORA CHAMA A FUNÇÃO COMPLETA
             df_pdf = df_resumo.copy()
             df_pdf['VALOR'] = df_pdf['VALOR'].apply(formatar_moeda)
-            btn_pdf = gerar_pdf_completo(df_pdf, nome_vend, data_sel.strftime('%d/%m/%Y'), fat_total_str, peso_total, qtd_pedidos)
+            btn_pdf = gerar_pdf_completo(df_pdf, nome_vend, data_sel.strftime('%d/%m/%Y'), fat_tot_str, peso_tot, len(df_resumo))
             st.download_button("📄 PDF", btn_pdf, f"Relatorio_{nome_vend}.pdf", use_container_width=True)
 
-        # --- KPIs ---
+        # KPIs
         st.write("---")
         k1, k2, k3, k4 = st.columns(4)
-        k1.metric("Faturamento", fat_total_str)
-        k2.metric("Peso Total", f"{peso_total:,.2f} kg".replace(".", ","))
-        k3.metric("Pedidos", qtd_pedidos)
-        k4.metric("Ticket Médio", formatar_moeda(df_resumo['VALOR'].sum()/qtd_pedidos))
+        k1.metric("Faturamento", fat_tot_str)
+        k2.metric("Peso Total", f"{peso_tot:,.2f} kg".replace(".", ","))
+        k3.metric("Pedidos", len(df_resumo))
+        k4.metric("Ticket Médio", formatar_moeda(df_resumo['VALOR'].sum()/len(df_resumo)))
 
-        # --- SEÇÃO DE GRÁFICOS ---
+        # Gráficos
         st.write("### 📊 Análise Visual")
         g1, g2 = st.columns(2)
-
         with g1:
             st.write("**Top 5 Clientes (R$)**")
-            top_clientes = df_resumo.nlargest(5, 'VALOR')
-            chart_cli = alt.Chart(top_clientes).mark_bar(color='#007bff', cornerRadiusEnd=5).encode(
-                x=alt.X('VALOR:Q', title='Valor Total', axis=alt.Axis(format=',.2f')),
+            top_cli = df_resumo.nlargest(5, 'VALOR').copy()
+            top_cli['VALOR_BR'] = top_cli['VALOR'].apply(formatar_moeda)
+            chart_cli = alt.Chart(top_cli).mark_bar(color='#007bff', cornerRadiusEnd=5).encode(
+                x=alt.X('VALOR:Q', title='Total (R$)', axis=alt.Axis(format='.2f')),
                 y=alt.Y('CLIENTE:N', sort='-x', title=None),
-                tooltip=[alt.Tooltip('CLIENTE:N'), alt.Tooltip('VALOR:Q', format=',.2f', title='Valor (R$)')]
-            ).properties(height=alt.Step(40)) 
+                tooltip=[alt.Tooltip('CLIENTE:N', title='Cliente'), alt.Tooltip('VALOR_BR:N', title='Faturamento')]
+            ).properties(height=alt.Step(40))
             st.altair_chart(chart_cli, use_container_width=True)
-
         with g2:
             st.write("**Faturamento por Hora**")
-            df_resumo['HORA_SIMPLES'] = df_resumo['HORA'].str[:2]
-            fatur_hora = df_resumo.groupby('HORA_SIMPLES')['VALOR'].sum().reset_index()
-            chart_hora = alt.Chart(fatur_hora).mark_area(
-                line={'color':'#28a745'},
-                color=alt.Gradient(gradient='linear', stops=[alt.GradientStop(color='white', offset=0), alt.GradientStop(color='#28a745', offset=1)], x1=1, x2=1, y1=1, y2=0)
-            ).encode(
-                x=alt.X('HORA_SIMPLES:N', title='Hora do Dia'),
-                y=alt.Y('VALOR:Q', title='Total (R$)', axis=alt.Axis(format=',.2f')),
-                tooltip=[alt.Tooltip('HORA_SIMPLES:N', title='Hora'), alt.Tooltip('VALOR:Q', format=',.2f', title='Total')]
+            df_resumo['HORA_FORMATADA'] = df_resumo['HORA'].str[:2] + ":00h"
+            fatur_h = df_resumo.groupby('HORA_FORMATADA')['VALOR'].sum().reset_index()
+            chart_h = alt.Chart(fatur_h).mark_area(line={'color':'#28a745'}, color=alt.Gradient(gradient='linear', stops=[alt.GradientStop(color='white', offset=0), alt.GradientStop(color='#28a745', offset=1)], x1=1, x2=1, y1=1, y2=0)).encode(
+                x=alt.X('HORA_FORMATADA:N', title='Hora do Dia', sort=None),
+                y=alt.Y('VALOR:Q', title='Total (R$)', axis=alt.Axis(format='.2f')),
+                tooltip=[alt.Tooltip('HORA_FORMATADA:N', title='Horário'), alt.Tooltip('VALOR:Q', format=',.2f', title='Total (R$)')]
             ).properties(height=160)
-            st.altair_chart(chart_hora, use_container_width=True)
+            st.altair_chart(chart_h, use_container_width=True)
 
-        # --- TABELA DE DADOS ---
+        # Tabela
         st.write("---")
         df_disp = df_resumo[['PEDIDO', 'COD_CLI', 'CLIENTE', 'VALOR', 'NFE', 'HORA']].copy()
         df_disp['VALOR'] = df_disp['VALOR'].apply(formatar_moeda)
-        
-        selecao = st.dataframe(
-            df_disp, use_container_width=True, hide_index=True, 
-            on_select="rerun", selection_mode="single-row",
-            column_config={"CLIENTE": st.column_config.TextColumn("Cliente", width=600)}
-        )
+        sel = st.dataframe(df_disp, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", column_config={"CLIENTE": st.column_config.TextColumn("Cliente", width=600)})
 
-        # --- DETALHE ---
-        if selecao.get("selection", {}).get("rows"):
-            idx = selecao["selection"]["rows"][0]
+        # Detalhe
+        if sel.get("selection", {}).get("rows"):
+            idx = sel["selection"]["rows"][0]
             num_ped = df_resumo.iloc[idx]['PEDIDO']
-            df_itens = df_filtrado[df_filtrado.iloc[:, 10] == num_ped]
-            
+            df_it = df_filtrado[df_filtrado.iloc[:, 10] == num_ped]
             st.write("###")
-            c_det1, c_det2, c_det3 = st.columns(3)
-            with c_det1: st.info(f"**Cliente:** {df_itens.iloc[0, 5]}\n\n**Pedido:** {num_ped}")
-            with c_det2: st.warning(f"**Coligação:** {df_itens.iloc[0, 6]}\n\n**NF-e:** {df_itens.iloc[0, 11]}")
-            with c_det3: st.success(f"**Valor:** {formatar_moeda(df_itens['VALOR_NUM'].sum())}\n\n**Peso:** {df_itens['PESO_NUM'].sum():,.2f} kg".replace(".", ","))
-
-            df_itens_det = df_itens.iloc[:, [13, 15, 7, 19, 20, 22]].copy()
-            df_itens_det.columns = ['CÓDIGO', 'PRODUTO', 'FABRICANTE', 'CX', 'UN', 'VALOR']
-            df_itens_det['VALOR'] = df_itens_det['VALOR'].apply(limpar_para_numero).apply(formatar_moeda)
-            st.dataframe(df_itens_det, hide_index=True, use_container_width=True)
-    else:
-        st.info("Nenhum dado encontrado.")
+            c_d1, c_d2, c_d3 = st.columns(3)
+            with c_d1: st.info(f"**Cliente:** {df_it.iloc[0, 5]}\n\n**Pedido:** {num_ped}")
+            with c_d2: st.warning(f"**Coligação:** {df_it.iloc[0, 6]}\n\n**NF-e:** {df_it.iloc[0, 11]}")
+            with c_d3: st.success(f"**Valor:** {formatar_moeda(df_it['VALOR_NUM'].sum())}\n\n**Peso:** {df_it['PESO_NUM'].sum():,.2f} kg".replace(".", ","))
+            df_it_det = df_it.iloc[:, [13, 15, 7, 19, 20, 22]].copy()
+            df_it_det.columns = ['CÓDIGO', 'PRODUTO', 'FABRICANTE', 'CX', 'UN', 'VALOR']
+            df_it_det['VALOR'] = df_it_det['VALOR'].apply(limpar_para_numero).apply(formatar_moeda)
+            st.dataframe(df_it_det, hide_index=True, use_container_width=True)
+    else: st.info("Nenhum dado encontrado.")
