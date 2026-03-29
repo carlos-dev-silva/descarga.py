@@ -2,10 +2,11 @@ import streamlit as st
 import pandas as pd
 from datetime import date
 import re
+import io
 
 st.set_page_config(layout="wide", page_title="Dashboard de Descarga")
 
-# 1. Função de Formatação de Moeda (Padrão Brasileiro)
+# 1. Função de Formatação de Moeda
 def formatar_moeda(valor):
     try:
         val = float(valor)
@@ -14,7 +15,7 @@ def formatar_moeda(valor):
     except:
         return "R$ 0,00"
 
-# 2. FUNÇÃO DE LIMPEZA NUMÉRICA (Garante que Valor e Peso funcionem)
+# 2. Limpeza Numérica
 def limpar_para_numero(valor):
     if pd.isna(valor): return 0.0
     s = str(valor).strip().replace('R$', '').replace(' ', '')
@@ -28,30 +29,27 @@ def limpar_para_numero(valor):
     except:
         return 0.0
 
+# 3. Função para Gerar Excel (Exportação)
+def to_excel(df):
+    output = io.BytesIO()
+    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
+        df.to_excel(writer, index=False, sheet_name='Resumo_Pedidos')
+    return output.getvalue()
+
 @st.cache_data
 def load_data():
     try:
-        # Lendo os CSVs (dtype=str para manter os dados originais)
         df_f = pd.read_csv("Faturamento.csv", sep=";", encoding='latin-1', dtype=str) 
         df_v = pd.read_csv("Vendedores.csv", sep=";", encoding='latin-1', dtype=str)
-        
-        # Limpeza de Data
         df_f['DATA_FILTRO'] = pd.to_datetime(df_f.iloc[:, 9], dayfirst=True, errors='coerce')
-        
-        # Criamos colunas numéricas apenas para os cálculos de soma e peso
         df_f['VALOR_NUM'] = df_f.iloc[:, 22].apply(limpar_para_numero)
         df_f['PESO_NUM'] = df_f.iloc[:, 26].apply(limpar_para_numero)
-        
-        # --- LIMPEZA DO PRODUTO (Retirar Fabricante da Descrição) ---
-        def remover_fabricante(row):
-            prod = str(row.iloc[15]).strip()
-            fab = str(row.iloc[7]).strip()
-            if fab.lower() in prod.lower():
-                regex = re.compile(re.escape(fab), re.IGNORECASE)
-                res = regex.sub('', prod)
-                return res.replace(' - ', ' ').strip()
-            return prod
 
+        def remover_fabricante(row):
+            prod, fab = str(row.iloc[15]).strip(), str(row.iloc[7]).strip()
+            if fab.lower() in prod.lower():
+                return re.sub(re.escape(fab), '', prod, flags=re.IGNORECASE).replace(' - ', ' ').strip()
+            return prod
         df_f.iloc[:, 15] = df_f.apply(remover_fabricante, axis=1)
         
         return df_f.dropna(subset=['DATA_FILTRO']), df_v
@@ -70,7 +68,6 @@ if df_fat is not None:
         nome_vend = st.selectbox("Selecione o Vendedor", vendedores)
         cod_vend = str(df_vend[df_vend.iloc[:, 1] == nome_vend].iloc[0, 0]).strip()
 
-    # --- FILTRAGEM ---
     mask = (df_fat['DATA_FILTRO'].dt.date == data_sel) & \
            ((df_fat.iloc[:, 1].astype(str).str.strip() == cod_vend) | 
             (df_fat.iloc[:, 2].astype(str).str.strip() == nome_vend))
@@ -78,7 +75,6 @@ if df_fat is not None:
     df_filtrado = df_fat[mask].copy()
     df_filtrado = df_filtrado.drop_duplicates(subset=[df_filtrado.columns[10], df_filtrado.columns[15]])
 
-    # --- DASHBOARD ---
     st.subheader("📋 Resumo dos Pedidos do Dia")
     
     if df_filtrado.empty:
@@ -93,53 +89,43 @@ if df_fat is not None:
         }).reset_index()
         df_resumo.columns = ['PEDIDO', 'COD_CLI', 'CLIENTE', 'VALOR', 'NFE', 'HORA']
 
-        c1, c2 = st.columns(2)
+        # KPIs e Botão de Exportar
+        c1, c2, c3 = st.columns([1, 1, 1])
         c1.metric("TOTAL VENDAS", formatar_moeda(df_resumo['VALOR'].sum()))
         p_total = df_filtrado['PESO_NUM'].sum()
         c2.metric("PESO TOTAL", f"{p_total:,.3f} kg".replace(",", "X").replace(".", ",").replace("X", "."))
+        
+        # Gerar o arquivo Excel para Download
+        excel_data = to_excel(df_resumo)
+        c3.download_button(
+            label="📥 Exportar Resumo (Excel)",
+            data=excel_data,
+            file_name=f'Resumo_{nome_vend}_{data_sel}.xlsx',
+            mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )
 
         df_display = df_resumo.copy()
         df_display['VALOR'] = df_display['VALOR'].apply(formatar_moeda)
         
         selecao = st.dataframe(
-            df_display, 
-            use_container_width=True, 
-            hide_index=True, 
-            on_select="rerun", 
-            selection_mode="single-row",
+            df_display, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row",
             column_config={
-                "PEDIDO": st.column_config.TextColumn(width="small"),
-                "HORA": st.column_config.TextColumn(width="small"),
-                "COD_CLI": st.column_config.TextColumn(width="small"),
                 "CLIENTE": st.column_config.TextColumn(width="large"),
-                "VALOR": st.column_config.TextColumn(width="medium"),
-                "NFE": st.column_config.TextColumn(width="small")
+                "VALOR": st.column_config.TextColumn(width="medium")
             }
         )
 
         st.divider() 
 
-        # --- DETALHE ---
-        st.subheader("🔍 Detalhe do Pedido Selecionado")
-        
+        # --- DETALHE DO PEDIDO ---
         if selecao.get("selection", {}).get("rows"):
             idx = selecao["selection"]["rows"][0]
             num_pedido = df_resumo.iloc[idx]['PEDIDO'] 
             df_itens = df_filtrado[df_filtrado.iloc[:, 10] == num_pedido]
             
-            col_info1, col_info2, col_info3 = st.columns(3)
-            with col_info1:
-                st.info(f"**Cliente:** {df_itens.iloc[0, 5]}\n\n**Pedido:** {num_pedido}")
-            with col_info2:
-                colig = df_itens.iloc[0, 6]
-                st.warning(f"**Coligação:** {colig if pd.notna(colig) else 'NÃO TEM'}\n\n**NF-e:** {df_itens.iloc[0, 11]}")
-            with col_info3:
-                v_ped = df_itens['VALOR_NUM'].sum()
-                p_ped = df_itens['PESO_NUM'].sum()
-                st.success(f"**Valor:** {formatar_moeda(v_ped)}\n\n**Peso:** {p_ped:,.3f} kg".replace(".", ","))
-
-            # Tabela de Detalhes (Sem EAN)
-            # Para evitar o "R$", forçamos a CX e UN a serem Strings puras
+            st.subheader(f"🔍 Detalhe do Pedido: {num_pedido}")
+            
+            # Tabela de Detalhes
             df_det = pd.DataFrame({
                 'CÓDIGO': df_itens.iloc[:, 13],
                 'PRODUTO': df_itens.iloc[:, 15],
@@ -151,14 +137,15 @@ if df_fat is not None:
             })
             
             st.dataframe(
-                df_det, 
-                hide_index=True, 
-                use_container_width=True,
-                column_config={
-                    "CÓDIGO": st.column_config.TextColumn(width="small"),
-                    "PRODUTO": st.column_config.TextColumn(width="large"),
-                    "FABRICANTE": st.column_config.TextColumn(width="medium"),
-                    "CX": st.column_config.TextColumn(width="small"), # Força texto
-                    "UN": st.column_config.TextColumn(width="small")  # Força texto
-                }
+                df_det, hide_index=True, use_container_width=True,
+                column_config={"PRODUTO": st.column_config.TextColumn(width="large")}
+            )
+            
+            # Botão Extra: Exportar apenas este pedido selecionado
+            excel_pedido = to_excel(df_det)
+            st.download_button(
+                label=f"📥 Baixar Itens do Pedido {num_pedido}",
+                data=excel_pedido,
+                file_name=f'Pedido_{num_pedido}.xlsx',
+                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
             )
