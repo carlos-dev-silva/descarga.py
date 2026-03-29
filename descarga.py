@@ -10,12 +10,11 @@ def formatar_moeda(valor):
     try:
         val = float(valor)
         if val == 0: return "R$ 0,00"
-        # Formata o número e inverte os sinais para o padrão BR
         return f"R$ {val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     except:
         return "R$ 0,00"
 
-# 2. FUNÇÃO DE LIMPEZA NUMÉRICA (Garante que Valor e Peso funcionem)
+# 2. FUNÇÃO DE LIMPEZA NUMÉRICA (Garante que os cálculos não zerem)
 def limpar_para_numero(valor):
     if pd.isna(valor): return 0.0
     s = str(valor).strip().replace('R$', '').replace(' ', '')
@@ -29,12 +28,12 @@ def limpar_para_numero(valor):
     except:
         return 0.0
 
-# 3. FUNÇÃO PARA LIMPAR UNIDADES E CAIXAS (Força número inteiro simples)
-def limpar_inteiro(valor):
+# 3. FUNÇÃO PARA LIMPAR UNIDADES E CAIXAS (Força texto simples sem R$)
+def limpar_texto_inteiro(valor):
     if pd.isna(valor) or str(valor).strip() == "" or str(valor).lower() == "nan": 
         return "0"
     try:
-        # Converte para float e depois para int para remover o .0
+        # Remove casas decimais se existirem (ex: 24.0 -> 24)
         return str(int(float(str(valor).replace(',', '.'))))
     except:
         return str(valor).split('.')[0]
@@ -49,13 +48,9 @@ def load_data():
         # Limpeza de Data
         df_f['DATA_FILTRO'] = pd.to_datetime(df_f.iloc[:, 9], dayfirst=True, errors='coerce')
         
-        # Limpeza Numérica
+        # Limpeza Numérica para KPIs e Cálculos
         df_f['VALOR_NUM'] = df_f.iloc[:, 22].apply(limpar_para_numero)
         df_f['PESO_NUM'] = df_f.iloc[:, 26].apply(limpar_para_numero)
-        
-        # Limpeza de Unidades e Caixas (Garante que não vire contábil)
-        df_f.iloc[:, 19] = df_f.iloc[:, 19].apply(limpar_inteiro)
-        df_f.iloc[:, 20] = df_f.iloc[:, 20].apply(limpar_inteiro)
         
         # --- LIMPEZA DO PRODUTO (Retirar Fabricante da Descrição) ---
         def remover_fabricante(row):
@@ -151,17 +146,18 @@ if df_fat is not None:
                 colig = df_itens.iloc[0, 6]
                 st.warning(f"**Coligação:** {colig if pd.notna(colig) else 'NÃO TEM'}\n\n**NF-e:** {df_itens.iloc[0, 11]}")
             with col_info3:
-                v_ped = df_itens['VALOR_NUM'].sum()
-                p_ped = df_itens['PESO_NUM'].sum()
-                st.success(f"**Valor:** {formatar_moeda(v_ped)}\n\n**Peso:** {p_ped:,.3f} kg".replace(".", ","))
+                val_ped = df_itens['VALOR_NUM'].sum()
+                pes_ped = df_itens['PESO_NUM'].sum()
+                st.success(f"**Valor:** {formatar_moeda(val_ped)}\n\n**Peso:** {pes_ped:,.3f} kg".replace(".", ","))
 
-            # Tabela de Detalhes (Sem EAN e com CX/UN como inteiros)
+            # Tabela de Detalhes (Sem EAN e sem formatação de moeda em CX e UN)
+            # Aplicamos limpar_texto_inteiro aqui para garantir que são apenas números
             df_det = pd.DataFrame({
                 'CÓDIGO': df_itens.iloc[:, 13],
                 'PRODUTO': df_itens.iloc[:, 15],
                 'FABRICANTE': df_itens.iloc[:, 7],
-                'CX': df_itens.iloc[:, 19],
-                'UN': df_itens.iloc[:, 20],
+                'CX': df_itens.iloc[:, 19].apply(limpar_texto_inteiro),
+                'UN': df_itens.iloc[:, 20].apply(limpar_texto_inteiro),
                 'VALOR': df_itens['VALOR_NUM'].apply(formatar_moeda),
                 'PESO': df_itens['PESO_NUM'].apply(lambda x: f"{x:,.3f} kg".replace(".", ","))
             })
@@ -174,8 +170,8 @@ if df_fat is not None:
                     "CÓDIGO": st.column_config.TextColumn(width="small"),
                     "PRODUTO": st.column_config.TextColumn(width="large"),
                     "FABRICANTE": st.column_config.TextColumn(width="medium"),
-                    "CX": st.column_config.TextColumn(width="small"),
-                    "UN": st.column_config.TextColumn(width="small"),
+                    "CX": st.column_config.TextColumn(width="small"), # Força exibição como Texto
+                    "UN": st.column_config.TextColumn(width="small"), # Força exibição como Texto
                     "VALOR": st.column_config.TextColumn(width="medium")
                 }
             )
