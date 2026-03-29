@@ -93,7 +93,7 @@ if df_fat is not None:
         nome_vend = st.selectbox("👤 Vendedor", vendedores)
         cod_vend = str(df_vend[df_vend.iloc[:, 1] == nome_vend].iloc[0, 0]).strip()
         st.divider()
-        st.caption("v4.0 - CCN Intelligence")
+        st.caption("v4.1 - CCN Intelligence")
 
     # Filtro Base
     mask = (df_fat['DATA_FILTRO'].dt.date == data_sel) & \
@@ -104,7 +104,6 @@ if df_fat is not None:
     df_filtrado = df_filtrado.drop_duplicates(subset=[df_filtrado.columns[10], df_filtrado.columns[15]])
 
     if not df_filtrado.empty:
-        # Agrupamento para Resumo
         df_resumo = df_filtrado.groupby(df_filtrado.columns[10]).agg({
             df_filtrado.columns[0]: 'first', df_filtrado.columns[5]: 'first',
             'VALOR_NUM': 'sum', df_filtrado.columns[11]: 'first', 
@@ -122,11 +121,13 @@ if df_fat is not None:
             st.write("##")
             output_ex = io.BytesIO()
             with pd.ExcelWriter(output_ex, engine='xlsxwriter') as wr:
-                df_resumo.to_excel(wr, index=False)
+                df_resumo[['PEDIDO', 'COD_CLI', 'CLIENTE', 'VALOR', 'NFE', 'HORA']].to_excel(wr, index=False)
             st.download_button("📥 Excel", output_ex.getvalue(), f"Resumo_{nome_vend}.xlsx", use_container_width=True)
         
         with h3:
             st.write("##")
+            df_pdf = df_resumo.copy()
+            df_pdf['VALOR'] = df_pdf['VALOR'].apply(formatar_moeda)
             pdf = PDF()
             pdf.add_page()
             pdf.set_font('Arial', 'B', 10)
@@ -142,23 +143,23 @@ if df_fat is not None:
         k3.metric("Pedidos", len(df_resumo))
         k4.metric("Ticket Médio", formatar_moeda(total_venda/len(df_resumo)))
 
-        # --- NOVA SEÇÃO DE GRÁFICOS ---
+        # --- SEÇÃO DE GRÁFICOS ---
         st.write("### 📊 Análise Visual")
         g1, g2 = st.columns(2)
 
         with g1:
             st.write("**Top 5 Clientes (R$)**")
             top_clientes = df_resumo.nlargest(5, 'VALOR')
+            # Ajuste de altura dinâmica: alt.Step(40) impede que 1 barra fique "gigante"
             chart_cli = alt.Chart(top_clientes).mark_bar(color='#007bff', cornerRadiusEnd=5).encode(
-                x=alt.X('VALOR:Q', title='Faturamento'),
+                x=alt.X('VALOR:Q', title='Valor Total', axis=alt.Axis(format=',.2f')),
                 y=alt.Y('CLIENTE:N', sort='-x', title=None),
-                tooltip=['CLIENTE', 'VALOR']
-            ).properties(height=300)
+                tooltip=[alt.Tooltip('CLIENTE:N'), alt.Tooltip('VALOR:Q', format=',.2f', title='Valor (R$)')]
+            ).properties(height=alt.Step(40)) 
             st.altair_chart(chart_cli, use_container_width=True)
 
         with g2:
             st.write("**Faturamento por Hora**")
-            # Agrupa por hora (pegando os primeiros 2 dígitos da string HORA)
             df_resumo['HORA_SIMPLES'] = df_resumo['HORA'].str[:2]
             fatur_hora = df_resumo.groupby('HORA_SIMPLES')['VALOR'].sum().reset_index()
             chart_hora = alt.Chart(fatur_hora).mark_area(
@@ -171,20 +172,14 @@ if df_fat is not None:
                 )
             ).encode(
                 x=alt.X('HORA_SIMPLES:N', title='Hora do Dia'),
-                y=alt.Y('VALOR:Q', title='Total (R$)'),
-            ).properties(height=300)
+                y=alt.Y('VALOR:Q', title='Total (R$)', axis=alt.Axis(format=',.2f')),
+                tooltip=[alt.Tooltip('HORA_SIMPLES:N', title='Hora'), alt.Tooltip('VALOR:Q', format=',.2f', title='Total')]
+            ).properties(height=200) # Altura fixa menor para ficar elegante
             st.altair_chart(chart_hora, use_container_width=True)
 
-        # --- TABELA COM BUSCA ---
+        # --- TABELA DE DADOS (Busca removida) ---
         st.write("---")
-        col_busca, _ = st.columns([2, 2])
-        busca = col_busca.text_input("🔍 Buscar Cliente ou Pedido", placeholder="Digite o nome...")
-        
-        df_final = df_resumo[['PEDIDO', 'COD_CLI', 'CLIENTE', 'VALOR', 'NFE', 'HORA']].copy()
-        if busca:
-            df_final = df_final[df_final['CLIENTE'].str.contains(busca, case=False) | df_final['PEDIDO'].str.contains(busca)]
-        
-        df_disp = df_final.copy()
+        df_disp = df_resumo[['PEDIDO', 'COD_CLI', 'CLIENTE', 'VALOR', 'NFE', 'HORA']].copy()
         df_disp['VALOR'] = df_disp['VALOR'].apply(formatar_moeda)
         
         selecao = st.dataframe(
@@ -196,7 +191,7 @@ if df_fat is not None:
         # --- DETALHE ---
         if selecao.get("selection", {}).get("rows"):
             idx = selecao["selection"]["rows"][0]
-            num_ped = df_final.iloc[idx]['PEDIDO']
+            num_ped = df_resumo.iloc[idx]['PEDIDO']
             df_itens = df_filtrado[df_filtrado.iloc[:, 10] == num_ped]
             
             st.write("###")
@@ -205,12 +200,11 @@ if df_fat is not None:
             with c_det2: st.warning(f"**Coligação:** {df_itens.iloc[0, 6]}\n\n**NF-e:** {df_itens.iloc[0, 11]}")
             with c_det3: st.success(f"**Valor:** {formatar_moeda(df_itens['VALOR_NUM'].sum())}\n\n**Peso:** {df_itens['PESO_NUM'].sum():,.2f} kg".replace(".", ","))
 
-            st.dataframe(
-                df_itens.iloc[:, [13, 15, 7, 19, 20, 22]].rename(columns={
-                    df_itens.columns[13]: 'CÓDIGO', df_itens.columns[15]: 'PRODUTO', 
-                    df_itens.columns[7]: 'FABRICANTE', df_itens.columns[19]: 'CX', 
-                    df_itens.columns[20]: 'UN', df_itens.columns[22]: 'VALOR'
-                }), hide_index=True, use_container_width=True
-            )
+            # Tabela de itens com nomes de colunas limpos
+            df_itens_det = df_itens.iloc[:, [13, 15, 7, 19, 20, 22]].copy()
+            df_itens_det.columns = ['CÓDIGO', 'PRODUTO', 'FABRICANTE', 'CX', 'UN', 'VALOR']
+            df_itens_det['VALOR'] = df_itens_det['VALOR'].apply(limpar_para_numero).apply(formatar_moeda)
+            
+            st.dataframe(df_itens_det, hide_index=True, use_container_width=True)
     else:
-        st.info("Aguardando seleção de filtros...")
+        st.info("Nenhum dado encontrado para os filtros selecionados.")
