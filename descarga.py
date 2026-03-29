@@ -5,7 +5,7 @@ import re
 
 st.set_page_config(layout="wide", page_title="Dashboard de Descarga")
 
-# 1. Formatação de Moeda (R$ 1.234,56)
+# 1. Formatação de Moeda Brasileira (Ex: R$ 1.500,50)
 def formatar_moeda(valor):
     try:
         val = float(valor)
@@ -14,37 +14,39 @@ def formatar_moeda(valor):
     except:
         return "R$ 0,00"
 
-# 2. LIMPEZA NUMÉRICA (Garante que Valor e Peso não fiquem zerados)
+# 2. Limpeza Numérica (Garante que Peso e Valor não fiquem em 0)
 def limpar_para_numero(valor):
     if pd.isna(valor): return 0.0
     s = str(valor).strip().replace('R$', '').replace(' ', '')
     if not s or s.lower() == 'nan': return 0.0
     try:
-        # Se o número tem ponto de milhar e vírgula decimal (1.234,56)
+        # Trata 1.234,56 ou 1234,56
         if ',' in s and '.' in s:
             s = s.replace('.', '').replace(',', '.')
-        # Se tem apenas vírgula (1234,56)
         elif ',' in s:
             s = s.replace(',', '.')
         return float(s)
     except:
         return 0.0
 
-# 3. CORREÇÃO DEFINITIVA DO EAN (Remove o 7,90E+12)
+# 3. SOLUÇÃO DEFINITIVA PARA O EAN (Mata o 7,90E+12)
 def limpar_ean(valor):
     if pd.isna(valor) or str(valor).strip() == "" or str(valor).lower() == "nan": 
         return ""
     try:
-        # Converte o formato científico (7.9E+12) para número e depois para texto sem decimais
-        return f"{float(valor):.0f}"
+        # Converte o "7.9E+12" para 7900000000000 e remove o .0 do final
+        s = str(valor).strip()
+        # Se contiver 'E', forçamos a conversão via float para "esticar" o número
+        if 'E' in s.upper() or '.' in s:
+            return f"{float(s):.0f}"
+        return s
     except:
-        # Se falhar, tenta apenas pegar a parte antes do ponto
         return str(valor).split('.')[0].strip()
 
 @st.cache_data
 def load_data():
     try:
-        # Lê os CSVs (forçando tudo como texto inicialmente para não perder dados)
+        # Lê como string para evitar que o Pandas estrague os números no início
         df_f = pd.read_csv("Faturamento.csv", sep=";", encoding='latin-1', dtype=str) 
         df_v = pd.read_csv("Vendedores.csv", sep=";", encoding='latin-1', dtype=str)
         
@@ -55,10 +57,10 @@ def load_data():
         df_f['VALOR_NUM'] = df_f.iloc[:, 22].apply(limpar_para_numero)
         df_f['PESO_NUM'] = df_f.iloc[:, 26].apply(limpar_para_numero)
         
-        # Limpeza do EAN (Coluna 14)
+        # --- APLICAÇÃO DA LIMPEZA DO EAN ---
         df_f.iloc[:, 14] = df_f.iloc[:, 14].apply(limpar_ean)
         
-        # --- LIMPEZA DO PRODUTO (Retirar Fabricante da Descrição) ---
+        # --- LIMPEZA DA DESCRIÇÃO (Retira o Fabricante) ---
         def remover_fabricante(row):
             prod = str(row.iloc[15]).strip()
             fab = str(row.iloc[7]).strip()
@@ -72,21 +74,19 @@ def load_data():
         
         return df_f.dropna(subset=['DATA_FILTRO']), df_v
     except Exception as e:
-        st.error(f"Erro ao carregar dados: {e}")
+        st.error(f"Erro nos dados: {e}")
         return None, None
 
 df_fat, df_vend = load_data()
 
 if df_fat is not None:
-    # --- BARRA LATERAL ---
     with st.sidebar:
         st.header("📌 Filtros")
-        data_sel = st.date_input("Data da Descarga", value=date(2026, 3, 10), format="DD/MM/YYYY")
+        data_sel = st.date_input("Data da Descarga", value=date(2026, 3, 26), format="DD/MM/YYYY")
         vendedores = sorted(df_vend.iloc[:, 1].dropna().unique().tolist())
         nome_vend = st.selectbox("Selecione o Vendedor", vendedores)
         cod_vend = str(df_vend[df_vend.iloc[:, 1] == nome_vend].iloc[0, 0]).strip()
 
-    # --- FILTRAGEM ---
     mask = (df_fat['DATA_FILTRO'].dt.date == data_sel) & \
            ((df_fat.iloc[:, 1].astype(str).str.strip() == cod_vend) | 
             (df_fat.iloc[:, 2].astype(str).str.strip() == nome_vend))
@@ -98,7 +98,7 @@ if df_fat is not None:
     st.subheader("📋 Resumo dos Pedidos do Dia")
     
     if df_filtrado.empty:
-        st.warning("Nenhum pedido encontrado para esta data.")
+        st.warning("Sem pedidos para esta seleção.")
     else:
         df_resumo = df_filtrado.groupby(df_filtrado.columns[10]).agg({
             df_filtrado.columns[0]: 'first', # COD_CLI
@@ -109,16 +109,15 @@ if df_fat is not None:
         }).reset_index()
         df_resumo.columns = ['PEDIDO', 'COD_CLI', 'CLIENTE', 'VALOR', 'NFE', 'HORA']
 
-        # KPIs
         c1, c2 = st.columns(2)
         c1.metric("TOTAL VENDAS", formatar_moeda(df_resumo['VALOR'].sum()))
         p_total = df_filtrado['PESO_NUM'].sum()
         c2.metric("PESO TOTAL", f"{p_total:,.3f} kg".replace(",", "X").replace(".", ",").replace("X", "."))
 
-        # Configuração das Colunas (Aumentando CLIENTE e reduzindo outros)
         df_display = df_resumo.copy()
         df_display['VALOR'] = df_display['VALOR'].apply(formatar_moeda)
         
+        # CLIENTE Aumentado e outros Reduzidos
         selecao = st.dataframe(
             df_display, 
             use_container_width=True, 
@@ -129,7 +128,7 @@ if df_fat is not None:
                 "PEDIDO": st.column_config.TextColumn(width="small"),
                 "HORA": st.column_config.TextColumn(width="small"),
                 "COD_CLI": st.column_config.TextColumn(width="small"),
-                "CLIENTE": st.column_config.TextColumn(width=600), # SUPER LARGO
+                "CLIENTE": st.column_config.TextColumn(width=600), # LARGO
                 "VALOR": st.column_config.TextColumn(width="medium"),
                 "NFE": st.column_config.TextColumn(width="small")
             }
@@ -138,7 +137,7 @@ if df_fat is not None:
         st.divider() 
 
         # --- DETALHE ---
-        st.subheader("🔍 Detalhe do Pedido Selecionado")
+        st.subheader("🔍 Detalhe do Pedido")
         
         if selecao.get("selection", {}).get("rows"):
             idx = selecao["selection"]["rows"][0]
@@ -149,14 +148,10 @@ if df_fat is not None:
             with col_info1:
                 st.info(f"**Cliente:** {df_itens.iloc[0, 5]}\n\n**Pedido:** {num_pedido}")
             with col_info2:
-                colig = df_itens.iloc[0, 6]
-                st.warning(f"**Coligação:** {colig if pd.notna(colig) else 'NÃO TEM'}\n\n**NF-e:** {df_itens.iloc[0, 11]}")
+                st.warning(f"**Coligação:** {df_itens.iloc[0, 6] if pd.notna(df_itens.iloc[0, 6]) else 'SEM'}\n\n**NF-e:** {df_itens.iloc[0, 11]}")
             with col_info3:
-                v_ped = df_itens['VALOR_NUM'].sum()
-                p_ped = df_itens['PESO_NUM'].sum()
-                st.success(f"**Valor:** {formatar_moeda(v_ped)}\n\n**Peso:** {p_ped:,.3f} kg".replace(".", ","))
+                st.success(f"**Valor:** {formatar_moeda(df_itens['VALOR_NUM'].sum())}\n\n**Peso:** {df_itens['PESO_NUM'].sum():,.3f} kg".replace(".", ","))
 
-            # Tabela de Detalhes com EAN limpo e Produto largo
             df_det = pd.DataFrame({
                 'CÓDIGO': df_itens.iloc[:, 13],
                 'PRODUTO': df_itens.iloc[:, 15],
