@@ -10,30 +10,36 @@ def formatar_moeda(valor):
     try:
         val = float(valor)
         if val == 0: return "R$ 0,00"
-        return f"R$ {val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+        return f"{val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     except:
-        return "R$ 0,00"
+        return "0,00"
 
-# 2. FUNÇÃO MESTRA DE LIMPEZA NUMÉRICA (Resolve o problema do R$ 0,00 e Peso 0)
+# 2. FUNÇÃO MESTRA DE LIMPEZA NUMÉRICA
 def limpar_para_numero(valor):
     if pd.isna(valor): return 0.0
     s = str(valor).strip().replace('R$', '').replace(' ', '')
     if not s or s.lower() == 'nan': return 0.0
     try:
-        # Se o número vem como 1.234,56 -> tira o ponto e troca a vírgula por ponto
         if ',' in s and '.' in s:
             s = s.replace('.', '').replace(',', '.')
-        # Se vem apenas 1234,56 -> troca a vírgula por ponto
         elif ',' in s:
             s = s.replace(',', '.')
         return float(s)
     except:
         return 0.0
 
+# 3. FUNÇÃO PARA LIMPAR UNIDADES E CAIXAS (Remove o formato "contábil"/decimal)
+def limpar_inteiro(valor):
+    if pd.isna(valor) or str(valor).strip() == "": return "0"
+    try:
+        # Converte para float e depois para int para remover o .0
+        return str(int(float(str(valor).replace(',', '.'))))
+    except:
+        return str(valor).split('.')[0]
+
 @st.cache_data
 def load_data():
     try:
-        # Lê os CSVs do seu GitHub
         df_f = pd.read_csv("Faturamento.csv", sep=";", encoding='latin-1', dtype=str) 
         df_v = pd.read_csv("Vendedores.csv", sep=";", encoding='latin-1', dtype=str)
         
@@ -44,12 +50,15 @@ def load_data():
         df_f['VALOR_NUM'] = df_f.iloc[:, 22].apply(limpar_para_numero)
         df_f['PESO_NUM'] = df_f.iloc[:, 26].apply(limpar_para_numero)
         
+        # --- LIMPEZA DE UNIDADES E CAIXAS (Índices 19 e 20) ---
+        df_f.iloc[:, 19] = df_f.iloc[:, 19].apply(limpar_inteiro)
+        df_f.iloc[:, 20] = df_f.iloc[:, 20].apply(limpar_inteiro)
+        
         # --- LIMPEZA DO PRODUTO (Retirar Fabricante da Descrição) ---
         def remover_fabricante(row):
             prod = str(row.iloc[15]).strip()
             fab = str(row.iloc[7]).strip()
             if fab.lower() in prod.lower():
-                # Remove o nome do fabricante da descrição
                 regex = re.compile(re.escape(fab), re.IGNORECASE)
                 res = regex.sub('', prod)
                 return res.replace(' - ', ' ').strip()
@@ -98,13 +107,12 @@ if df_fat is not None:
 
         # KPIs
         c1, c2 = st.columns(2)
-        c1.metric("TOTAL VENDAS", formatar_moeda(df_resumo['VALOR'].sum()))
+        c1.metric("TOTAL VENDAS", f"R$ {formatar_moeda(df_resumo['VALOR'].sum())}")
         p_total = df_filtrado['PESO_NUM'].sum()
         c2.metric("PESO TOTAL", f"{p_total:,.3f} kg".replace(",", "X").replace(".", ",").replace("X", "."))
 
-        # Tabela Principal com larguras ajustadas
         df_display = df_resumo.copy()
-        df_display['VALOR'] = df_display['VALOR'].apply(formatar_moeda)
+        df_display['VALOR'] = df_display['VALOR'].apply(lambda x: f"R$ {formatar_moeda(x)}")
         
         selecao = st.dataframe(
             df_display, 
@@ -116,7 +124,7 @@ if df_fat is not None:
                 "PEDIDO": st.column_config.TextColumn(width="small"),
                 "HORA": st.column_config.TextColumn(width="small"),
                 "COD_CLI": st.column_config.TextColumn(width="small"),
-                "CLIENTE": st.column_config.TextColumn(width="large"), # AUMENTADO
+                "CLIENTE": st.column_config.TextColumn(width="large"),
                 "VALOR": st.column_config.TextColumn(width="medium"),
                 "NFE": st.column_config.TextColumn(width="small")
             }
@@ -141,16 +149,16 @@ if df_fat is not None:
             with col_info3:
                 v_ped = df_itens['VALOR_NUM'].sum()
                 p_ped = df_itens['PESO_NUM'].sum()
-                st.success(f"**Valor:** {formatar_moeda(v_ped)}\n\n**Peso:** {p_ped:,.3f} kg".replace(".", ","))
+                st.success(f"**Valor:** R$ {formatar_moeda(v_ped)}\n\n**Peso:** {p_ped:,.3f} kg".replace(".", ","))
 
-            # Tabela de Detalhes (Sem EAN)
+            # Tabela de Detalhes
             df_det = pd.DataFrame({
                 'CÓDIGO': df_itens.iloc[:, 13],
                 'PRODUTO': df_itens.iloc[:, 15],
                 'FABRICANTE': df_itens.iloc[:, 7],
-                'CX': df_itens.iloc[:, 19],
-                'UN': df_itens.iloc[:, 20],
-                'VALOR': df_itens['VALOR_NUM'].apply(formatar_moeda),
+                'CX': df_itens.iloc[:, 19], # Agora limpo como inteiro
+                'UN': df_itens.iloc[:, 20], # Agora limpo como inteiro
+                'VALOR': df_itens['VALOR_NUM'].apply(lambda x: f"R$ {formatar_moeda(x)}"),
                 'PESO': df_itens['PESO_NUM'].apply(lambda x: f"{x:,.3f} kg".replace(".", ","))
             })
             
@@ -159,9 +167,10 @@ if df_fat is not None:
                 hide_index=True, 
                 use_container_width=True,
                 column_config={
-                    "CÓDIGO": st.column_config.TextColumn(width="small"), # REDUZIDO
-                    "PRODUTO": st.column_config.TextColumn(width="large"), # AUMENTADO
+                    "CÓDIGO": st.column_config.TextColumn(width="small"),
+                    "PRODUTO": st.column_config.TextColumn(width="large"),
                     "FABRICANTE": st.column_config.TextColumn(width="medium"),
-                    "VALOR": st.column_config.TextColumn(width="medium")
+                    "CX": st.column_config.TextColumn(width="small"),
+                    "UN": st.column_config.TextColumn(width="small")
                 }
             )
