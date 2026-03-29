@@ -1,3 +1,4 @@
 pandas
 xlsxwriter
 fpdf
+altair
