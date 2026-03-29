@@ -8,7 +8,7 @@ from fpdf import FPDF
 # Configuração da página
 st.set_page_config(layout="wide", page_title="CCN - Dashboard de Descarga", page_icon="📊")
 
-# --- ESTILIZAÇÃO CSS (Visual Moderno) ---
+# --- ESTILIZAÇÃO CSS (Visual Moderno do Dashboard) ---
 st.markdown("""
     <style>
     div[data-testid="stMetric"] {
@@ -36,6 +36,24 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
+# --- CLASSE CUSTOMIZADA PARA PDF PROFISSIONAL ---
+class PDF(FPDF):
+    def header(self):
+        # Logo CCN
+        try:
+            self.image('sem_fundo.png', 10, 8, 33)
+        except:
+            pass
+        self.set_font('Arial', 'B', 15)
+        self.cell(80)
+        self.cell(30, 10, 'RELATÓRIO DE CARGA OPERACIONAL', 0, 0, 'C')
+        self.ln(20)
+
+    def footer(self):
+        self.set_y(-15)
+        self.set_font('Arial', 'I', 8)
+        self.cell(0, 10, f'Página {self.page_no()} | Gerado em {date.today().strftime("%d/%m/%Y")}', 0, 0, 'C')
+
 # --- FUNÇÕES DE APOIO ---
 def formatar_moeda(valor):
     try:
@@ -49,43 +67,66 @@ def limpar_para_numero(valor):
     if pd.isna(valor): return 0.0
     s = str(valor).strip().replace('R$', '').replace(' ', '')
     try:
-        if ',' in s and '.' in s:
-            s = s.replace('.', '').replace(',', '.')
-        elif ',' in s:
-            s = s.replace(',', '.')
+        if ',' in s and '.' in s: s = s.replace('.', '').replace(',', '.')
+        elif ',' in s: s = s.replace(',', '.')
         return float(s)
-    except:
-        return 0.0
+    except: return 0.0
 
-# --- EXPORTAÇÃO ---
+# --- EXPORTAÇÃO PDF TURBO ---
+def gerar_pdf_completo(df, vendedor, data_doc, faturamento, peso, qtd):
+    pdf = PDF()
+    pdf.add_page()
+    
+    # Box de Informações do Filtro
+    pdf.set_fill_color(240, 240, 240)
+    pdf.set_font('Arial', 'B', 10)
+    pdf.cell(190, 10, f" Vendedor: {vendedor} | Data da Descarga: {data_doc}", 1, 1, 'L', fill=True)
+    pdf.ln(5)
+
+    # Box de Resumo (KPIs)
+    pdf.set_font('Arial', 'B', 12)
+    pdf.cell(63, 10, "Faturamento Total", 1, 0, 'C')
+    pdf.cell(63, 10, "Peso Total", 1, 0, 'C')
+    pdf.cell(64, 10, "Pedidos", 1, 1, 'C')
+    
+    pdf.set_font('Arial', '', 11)
+    pdf.cell(63, 10, faturamento, 1, 0, 'C')
+    pdf.cell(63, 10, f"{peso:,.2f} kg".replace(".", ","), 1, 0, 'C')
+    pdf.cell(64, 10, str(qtd), 1, 1, 'C')
+    pdf.ln(10)
+
+    # Tabela de Pedidos
+    pdf.set_fill_color(0, 51, 102) # Azul Marinho CCN
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font('Arial', 'B', 9)
+    pdf.cell(20, 10, "PEDIDO", 1, 0, 'C', fill=True)
+    pdf.cell(20, 10, "CÓD", 1, 0, 'C', fill=True)
+    pdf.cell(90, 10, "CLIENTE", 1, 0, 'C', fill=True)
+    pdf.cell(30, 10, "VALOR", 1, 0, 'C', fill=True)
+    pdf.cell(30, 10, "HORA", 1, 1, 'C', fill=True)
+
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font('Arial', '', 8)
+    
+    for i, row in df.iterrows():
+        # Efeito de linhas alternadas (zebrado)
+        fill = True if i % 2 == 0 else False
+        pdf.set_fill_color(245, 245, 245)
+        
+        pdf.cell(20, 8, str(row['PEDIDO']), 1, 0, 'C', fill=fill)
+        pdf.cell(20, 8, str(row['COD_CLI']), 1, 0, 'C', fill=fill)
+        pdf.cell(90, 8, str(row['CLIENTE'])[:55], 1, 0, 'L', fill=fill)
+        pdf.cell(30, 8, str(row['VALOR']), 1, 0, 'C', fill=fill)
+        pdf.cell(30, 8, str(row['HORA']), 1, 1, 'C', fill=fill)
+        
+    return pdf.output(dest='S').encode('latin-1')
+
+# --- EXPORTAÇÃO EXCEL ---
 def para_excel(df):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
         df.to_excel(writer, index=False, sheet_name='Resumo')
     return output.getvalue()
-
-def para_pdf(df, titulo_doc):
-    pdf = FPDF()
-    pdf.add_page()
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(190, 10, txt=titulo_doc, ln=1, align='C')
-    pdf.ln(5)
-    pdf.set_font("Arial", 'B', 8)
-    pdf.cell(20, 8, "PEDIDO", 1)
-    pdf.cell(20, 8, "COD", 1)
-    pdf.cell(90, 8, "CLIENTE", 1)
-    pdf.cell(30, 8, "VALOR", 1)
-    pdf.cell(30, 8, "HORA", 1)
-    pdf.ln()
-    pdf.set_font("Arial", '', 7)
-    for _, row in df.iterrows():
-        pdf.cell(20, 8, str(row['PEDIDO']), 1)
-        pdf.cell(20, 8, str(row['COD_CLI']), 1)
-        pdf.cell(90, 8, str(row['CLIENTE'])[:55], 1)
-        pdf.cell(30, 8, str(row['VALOR']), 1)
-        pdf.cell(30, 8, str(row['HORA']), 1)
-        pdf.ln()
-    return pdf.output(dest='S').encode('latin-1')
 
 @st.cache_data
 def load_data():
@@ -110,21 +151,17 @@ def load_data():
 df_fat, df_vend = load_data()
 
 if df_fat is not None:
-    # --- BARRA LATERAL ---
     with st.sidebar:
-        try:
-            st.image("sem_fundo.png", use_container_width=True)
-        except:
-            pass
+        try: st.image("sem_fundo.png", use_container_width=True)
+        except: pass
         st.write("---")
         data_sel = st.date_input("🗓️ Data da Descarga", value=date(2026, 3, 10), format="DD/MM/YYYY")
         vendedores = sorted(df_vend.iloc[:, 1].dropna().unique().tolist())
         nome_vend = st.selectbox("👤 Vendedor", vendedores)
         cod_vend = str(df_vend[df_vend.iloc[:, 1] == nome_vend].iloc[0, 0]).strip()
         st.divider()
-        st.caption("v2.3 - Dashboard CCN")
+        st.caption("v3.0 - Dashboard CCN")
 
-    # Filtro de dados
     mask = (df_fat['DATA_FILTRO'].dt.date == data_sel) & \
            ((df_fat.iloc[:, 1].astype(str).str.strip() == cod_vend) | 
             (df_fat.iloc[:, 2].astype(str).str.strip() == nome_vend))
@@ -134,12 +171,12 @@ if df_fat is not None:
 
     if not df_filtrado.empty:
         df_resumo = df_filtrado.groupby(df_filtrado.columns[10]).agg({
-            df_filtrado.columns[0]: 'first', 
-            df_filtrado.columns[5]: 'first', 
+            df_filtrado.columns[0]: 'first', # COD_CLI
+            df_filtrado.columns[5]: 'first', # CLIENTE
             'VALOR_NUM': 'sum', 
             df_filtrado.columns[11]: 'first', 
             df_filtrado.columns[8]: 'first',
-            df_filtrado.columns[6]: 'first'  # Coligação
+            df_filtrado.columns[6]: 'first'  
         }).reset_index()
         df_resumo.columns = ['PEDIDO', 'COD_CLI', 'CLIENTE', 'VALOR', 'NFE', 'HORA', 'COLIGACAO']
 
@@ -148,6 +185,12 @@ if df_fat is not None:
         with head1:
             st.title("📋 Resumo Operacional")
             st.write(f"Vendedor: **{nome_vend}** | Data: **{data_sel.strftime('%d/%m/%Y')}**")
+        
+        # Preparação dos Dados de Resumo para Exportação
+        fat_total_str = formatar_moeda(df_resumo['VALOR'].sum())
+        peso_total = df_filtrado['PESO_NUM'].sum()
+        qtd_pedidos = len(df_resumo)
+        
         with head2:
             st.write("##")
             btn_excel = para_excel(df_resumo[['PEDIDO', 'COD_CLI', 'CLIENTE', 'VALOR', 'NFE', 'HORA']])
@@ -156,17 +199,17 @@ if df_fat is not None:
             st.write("##")
             df_pdf = df_resumo.copy()
             df_pdf['VALOR'] = df_pdf['VALOR'].apply(formatar_moeda)
-            btn_pdf = para_pdf(df_pdf, f"Resumo de Carga - {nome_vend}")
-            st.download_button("📄 PDF", btn_pdf, f"Resumo_{nome_vend}.pdf", use_container_width=True)
+            # NOVO PDF COMPLETO
+            btn_pdf = gerar_pdf_completo(df_pdf, nome_vend, data_sel.strftime('%d/%m/%Y'), fat_total_str, peso_total, qtd_pedidos)
+            st.download_button("📄 PDF", btn_pdf, f"Relatorio_{nome_vend}.pdf", use_container_width=True)
 
         st.divider()
 
         # --- KPIs ---
         m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Faturamento Total", formatar_moeda(df_resumo['VALOR'].sum()))
-        p_tot = df_filtrado['PESO_NUM'].sum()
-        m2.metric("Peso Total (kg)", f"{p_tot:,.2f}".replace(".", ","))
-        m3.metric("Qtd. Pedidos", len(df_resumo))
+        m1.metric("Faturamento Total", fat_total_str)
+        m2.metric("Peso Total (kg)", f"{peso_total:,.2f}".replace(".", ","))
+        m3.metric("Qtd. Pedidos", qtd_pedidos)
         m4.metric("Ticket Médio", formatar_moeda(df_resumo['VALOR'].mean()))
 
         st.write("###")
@@ -184,14 +227,13 @@ if df_fat is not None:
             }
         )
 
-        # --- DETALHE DO PEDIDO SELECIONADO (AS 6 INFORMAÇÕES VOLTARAM) ---
+        # --- DETALHE DO PEDIDO SELECIONADO ---
         if selecao.get("selection", {}).get("rows"):
             idx = selecao["selection"]["rows"][0]
             num_ped = df_resumo.iloc[idx]['PEDIDO']
             df_itens = df_filtrado[df_filtrado.iloc[:, 10] == num_ped]
             
             st.write("###")
-            # Restaurando o cabeçalho de detalhes com as 6 infos
             c_det1, c_det2, c_det3 = st.columns(3)
             with c_det1:
                 st.info(f"**Cliente:** {df_itens.iloc[0, 5]}\n\n**Pedido:** {num_ped}")
@@ -218,5 +260,3 @@ if df_fat is not None:
                     df_det, hide_index=True, use_container_width=True,
                     column_config={"PRODUTO": st.column_config.TextColumn(width=600)}
                 )
-    else:
-        st.info("Utilize os filtros à esquerda para carregar os dados.")
