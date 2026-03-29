@@ -4,11 +4,12 @@ from datetime import date
 import re
 import io
 from fpdf import FPDF
+import altair as alt
 
 # Configuração da página
-st.set_page_config(layout="wide", page_title="CCN - Dashboard de Descarga", page_icon="📊")
+st.set_page_config(layout="wide", page_title="CCN - Business Intelligence", page_icon="📈")
 
-# --- ESTILIZAÇÃO CSS (Visual Moderno do Dashboard) ---
+# --- ESTILIZAÇÃO CSS ---
 st.markdown("""
     <style>
     div[data-testid="stMetric"] {
@@ -26,42 +27,30 @@ st.markdown("""
     .stDownloadButton button {
         border-radius: 8px !important;
         border: 1px solid #d1d1d1 !important;
-        transition: all 0.3s ease;
-    }
-    .stDownloadButton button:hover {
-        border-color: #007bff !important;
-        color: #007bff !important;
-        background-color: #f0f7ff !important;
     }
     </style>
     """, unsafe_allow_html=True)
 
-# --- CLASSE CUSTOMIZADA PARA PDF PROFISSIONAL ---
+# --- CLASSE PDF ---
 class PDF(FPDF):
     def header(self):
-        # Logo CCN
-        try:
-            self.image('sem_fundo.png', 10, 8, 33)
-        except:
-            pass
+        try: self.image('sem_fundo.png', 10, 8, 33)
+        except: pass
         self.set_font('Arial', 'B', 15)
         self.cell(80)
-        self.cell(30, 10, 'RELATÓRIO DE CARGA OPERACIONAL', 0, 0, 'C')
+        self.cell(30, 10, 'RELATÓRIO DE PERFORMANCE DE CARGA', 0, 0, 'C')
         self.ln(20)
-
     def footer(self):
         self.set_y(-15)
         self.set_font('Arial', 'I', 8)
-        self.cell(0, 10, f'Página {self.page_no()} | Gerado em {date.today().strftime("%d/%m/%Y")}', 0, 0, 'C')
+        self.cell(0, 10, f'Página {self.page_no()} | CCN BI', 0, 0, 'C')
 
-# --- FUNÇÕES DE APOIO ---
+# --- FUNÇÕES ---
 def formatar_moeda(valor):
     try:
         val = float(valor)
-        if val == 0: return "R$ 0,00"
         return f"R$ {val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-    except:
-        return "R$ 0,00"
+    except: return "R$ 0,00"
 
 def limpar_para_numero(valor):
     if pd.isna(valor): return 0.0
@@ -71,62 +60,6 @@ def limpar_para_numero(valor):
         elif ',' in s: s = s.replace(',', '.')
         return float(s)
     except: return 0.0
-
-# --- EXPORTAÇÃO PDF TURBO ---
-def gerar_pdf_completo(df, vendedor, data_doc, faturamento, peso, qtd):
-    pdf = PDF()
-    pdf.add_page()
-    
-    # Box de Informações do Filtro
-    pdf.set_fill_color(240, 240, 240)
-    pdf.set_font('Arial', 'B', 10)
-    pdf.cell(190, 10, f" Vendedor: {vendedor} | Data da Descarga: {data_doc}", 1, 1, 'L', fill=True)
-    pdf.ln(5)
-
-    # Box de Resumo (KPIs)
-    pdf.set_font('Arial', 'B', 12)
-    pdf.cell(63, 10, "Faturamento Total", 1, 0, 'C')
-    pdf.cell(63, 10, "Peso Total", 1, 0, 'C')
-    pdf.cell(64, 10, "Pedidos", 1, 1, 'C')
-    
-    pdf.set_font('Arial', '', 11)
-    pdf.cell(63, 10, faturamento, 1, 0, 'C')
-    pdf.cell(63, 10, f"{peso:,.2f} kg".replace(".", ","), 1, 0, 'C')
-    pdf.cell(64, 10, str(qtd), 1, 1, 'C')
-    pdf.ln(10)
-
-    # Tabela de Pedidos
-    pdf.set_fill_color(0, 51, 102) # Azul Marinho CCN
-    pdf.set_text_color(255, 255, 255)
-    pdf.set_font('Arial', 'B', 9)
-    pdf.cell(20, 10, "PEDIDO", 1, 0, 'C', fill=True)
-    pdf.cell(20, 10, "CÓD", 1, 0, 'C', fill=True)
-    pdf.cell(90, 10, "CLIENTE", 1, 0, 'C', fill=True)
-    pdf.cell(30, 10, "VALOR", 1, 0, 'C', fill=True)
-    pdf.cell(30, 10, "HORA", 1, 1, 'C', fill=True)
-
-    pdf.set_text_color(0, 0, 0)
-    pdf.set_font('Arial', '', 8)
-    
-    for i, row in df.iterrows():
-        # Efeito de linhas alternadas (zebrado)
-        fill = True if i % 2 == 0 else False
-        pdf.set_fill_color(245, 245, 245)
-        
-        pdf.cell(20, 8, str(row['PEDIDO']), 1, 0, 'C', fill=fill)
-        pdf.cell(20, 8, str(row['COD_CLI']), 1, 0, 'C', fill=fill)
-        pdf.cell(90, 8, str(row['CLIENTE'])[:55], 1, 0, 'L', fill=fill)
-        pdf.cell(30, 8, str(row['VALOR']), 1, 0, 'C', fill=fill)
-        pdf.cell(30, 8, str(row['HORA']), 1, 1, 'C', fill=fill)
-        
-    return pdf.output(dest='S').encode('latin-1')
-
-# --- EXPORTAÇÃO EXCEL ---
-def para_excel(df):
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Resumo')
-    return output.getvalue()
 
 @st.cache_data
 def load_data():
@@ -145,7 +78,7 @@ def load_data():
         df_f.iloc[:, 15] = df_f.apply(remover_fabricante, axis=1)
         return df_f.dropna(subset=['DATA_FILTRO']), df_v
     except Exception as e:
-        st.error(f"Erro ao carregar: {e}")
+        st.error(f"Erro: {e}")
         return None, None
 
 df_fat, df_vend = load_data()
@@ -160,8 +93,9 @@ if df_fat is not None:
         nome_vend = st.selectbox("👤 Vendedor", vendedores)
         cod_vend = str(df_vend[df_vend.iloc[:, 1] == nome_vend].iloc[0, 0]).strip()
         st.divider()
-        st.caption("v3.0 - Dashboard CCN")
+        st.caption("v4.0 - CCN Intelligence")
 
+    # Filtro Base
     mask = (df_fat['DATA_FILTRO'].dt.date == data_sel) & \
            ((df_fat.iloc[:, 1].astype(str).str.strip() == cod_vend) | 
             (df_fat.iloc[:, 2].astype(str).str.strip() == nome_vend))
@@ -170,93 +104,113 @@ if df_fat is not None:
     df_filtrado = df_filtrado.drop_duplicates(subset=[df_filtrado.columns[10], df_filtrado.columns[15]])
 
     if not df_filtrado.empty:
+        # Agrupamento para Resumo
         df_resumo = df_filtrado.groupby(df_filtrado.columns[10]).agg({
-            df_filtrado.columns[0]: 'first', # COD_CLI
-            df_filtrado.columns[5]: 'first', # CLIENTE
-            'VALOR_NUM': 'sum', 
-            df_filtrado.columns[11]: 'first', 
-            df_filtrado.columns[8]: 'first',
-            df_filtrado.columns[6]: 'first'  
+            df_filtrado.columns[0]: 'first', df_filtrado.columns[5]: 'first',
+            'VALOR_NUM': 'sum', df_filtrado.columns[11]: 'first', 
+            df_filtrado.columns[8]: 'first', df_filtrado.columns[6]: 'first'  
         }).reset_index()
         df_resumo.columns = ['PEDIDO', 'COD_CLI', 'CLIENTE', 'VALOR', 'NFE', 'HORA', 'COLIGACAO']
 
         # --- CABEÇALHO ---
-        head1, head2, head3 = st.columns([4, 1, 1])
-        with head1:
-            st.title("📋 Resumo Operacional")
-            st.write(f"Vendedor: **{nome_vend}** | Data: **{data_sel.strftime('%d/%m/%Y')}**")
+        h1, h2, h3 = st.columns([4, 1, 1])
+        with h1:
+            st.title("🚀 Performance de Vendas")
+            st.write(f"Vendedor: **{nome_vend}** | **{data_sel.strftime('%d/%m/%Y')}**")
         
-        # Preparação dos Dados de Resumo para Exportação
-        fat_total_str = formatar_moeda(df_resumo['VALOR'].sum())
-        peso_total = df_filtrado['PESO_NUM'].sum()
-        qtd_pedidos = len(df_resumo)
+        with h2:
+            st.write("##")
+            output_ex = io.BytesIO()
+            with pd.ExcelWriter(output_ex, engine='xlsxwriter') as wr:
+                df_resumo.to_excel(wr, index=False)
+            st.download_button("📥 Excel", output_ex.getvalue(), f"Resumo_{nome_vend}.xlsx", use_container_width=True)
         
-        with head2:
+        with h3:
             st.write("##")
-            btn_excel = para_excel(df_resumo[['PEDIDO', 'COD_CLI', 'CLIENTE', 'VALOR', 'NFE', 'HORA']])
-            st.download_button("📥 Excel", btn_excel, f"Resumo_{nome_vend}.xlsx", use_container_width=True)
-        with head3:
-            st.write("##")
-            df_pdf = df_resumo.copy()
-            df_pdf['VALOR'] = df_pdf['VALOR'].apply(formatar_moeda)
-            # NOVO PDF COMPLETO
-            btn_pdf = gerar_pdf_completo(df_pdf, nome_vend, data_sel.strftime('%d/%m/%Y'), fat_total_str, peso_total, qtd_pedidos)
-            st.download_button("📄 PDF", btn_pdf, f"Relatorio_{nome_vend}.pdf", use_container_width=True)
-
-        st.divider()
+            pdf = PDF()
+            pdf.add_page()
+            pdf.set_font('Arial', 'B', 10)
+            pdf.cell(190, 10, f"Vendedor: {nome_vend} | Faturamento: {formatar_moeda(df_resumo['VALOR'].sum())}", 1, 1, 'C')
+            st.download_button("📄 PDF", pdf.output(dest='S').encode('latin-1'), f"Relatorio_{nome_vend}.pdf", use_container_width=True)
 
         # --- KPIs ---
-        m1, m2, m3, m4 = st.columns(4)
-        m1.metric("Faturamento Total", fat_total_str)
-        m2.metric("Peso Total (kg)", f"{peso_total:,.2f}".replace(".", ","))
-        m3.metric("Qtd. Pedidos", qtd_pedidos)
-        m4.metric("Ticket Médio", formatar_moeda(df_resumo['VALOR'].mean()))
+        st.write("---")
+        k1, k2, k3, k4 = st.columns(4)
+        total_venda = df_resumo['VALOR'].sum()
+        k1.metric("Faturamento", formatar_moeda(total_venda))
+        k2.metric("Peso Total", f"{df_filtrado['PESO_NUM'].sum():,.2f} kg".replace(".", ","))
+        k3.metric("Pedidos", len(df_resumo))
+        k4.metric("Ticket Médio", formatar_moeda(total_venda/len(df_resumo)))
 
-        st.write("###")
+        # --- NOVA SEÇÃO DE GRÁFICOS ---
+        st.write("### 📊 Análise Visual")
+        g1, g2 = st.columns(2)
 
-        # --- TABELA DE RESUMO ---
-        df_disp = df_resumo[['PEDIDO', 'COD_CLI', 'CLIENTE', 'VALOR', 'NFE', 'HORA']].copy()
+        with g1:
+            st.write("**Top 5 Clientes (R$)**")
+            top_clientes = df_resumo.nlargest(5, 'VALOR')
+            chart_cli = alt.Chart(top_clientes).mark_bar(color='#007bff', cornerRadiusEnd=5).encode(
+                x=alt.X('VALOR:Q', title='Faturamento'),
+                y=alt.Y('CLIENTE:N', sort='-x', title=None),
+                tooltip=['CLIENTE', 'VALOR']
+            ).properties(height=300)
+            st.altair_chart(chart_cli, use_container_width=True)
+
+        with g2:
+            st.write("**Faturamento por Hora**")
+            # Agrupa por hora (pegando os primeiros 2 dígitos da string HORA)
+            df_resumo['HORA_SIMPLES'] = df_resumo['HORA'].str[:2]
+            fatur_hora = df_resumo.groupby('HORA_SIMPLES')['VALOR'].sum().reset_index()
+            chart_hora = alt.Chart(fatur_hora).mark_area(
+                line={'color':'#28a745'},
+                color=alt.Gradient(
+                    gradient='linear',
+                    stops=[alt.GradientStop(color='white', offset=0),
+                           alt.GradientStop(color='#28a745', offset=1)],
+                    x1=1, x2=1, y1=1, y2=0
+                )
+            ).encode(
+                x=alt.X('HORA_SIMPLES:N', title='Hora do Dia'),
+                y=alt.Y('VALOR:Q', title='Total (R$)'),
+            ).properties(height=300)
+            st.altair_chart(chart_hora, use_container_width=True)
+
+        # --- TABELA COM BUSCA ---
+        st.write("---")
+        col_busca, _ = st.columns([2, 2])
+        busca = col_busca.text_input("🔍 Buscar Cliente ou Pedido", placeholder="Digite o nome...")
+        
+        df_final = df_resumo[['PEDIDO', 'COD_CLI', 'CLIENTE', 'VALOR', 'NFE', 'HORA']].copy()
+        if busca:
+            df_final = df_final[df_final['CLIENTE'].str.contains(busca, case=False) | df_final['PEDIDO'].str.contains(busca)]
+        
+        df_disp = df_final.copy()
         df_disp['VALOR'] = df_disp['VALOR'].apply(formatar_moeda)
+        
         selecao = st.dataframe(
             df_disp, use_container_width=True, hide_index=True, 
             on_select="rerun", selection_mode="single-row",
-            column_config={
-                "COD_CLI": st.column_config.TextColumn("Cód. Cliente", width="small"),
-                "CLIENTE": st.column_config.TextColumn("Nome do Cliente", width=600),
-                "PEDIDO": st.column_config.TextColumn("Nº Pedido", width="small")
-            }
+            column_config={"CLIENTE": st.column_config.TextColumn("Cliente", width=600)}
         )
 
-        # --- DETALHE DO PEDIDO SELECIONADO ---
+        # --- DETALHE ---
         if selecao.get("selection", {}).get("rows"):
             idx = selecao["selection"]["rows"][0]
-            num_ped = df_resumo.iloc[idx]['PEDIDO']
+            num_ped = df_final.iloc[idx]['PEDIDO']
             df_itens = df_filtrado[df_filtrado.iloc[:, 10] == num_ped]
             
             st.write("###")
             c_det1, c_det2, c_det3 = st.columns(3)
-            with c_det1:
-                st.info(f"**Cliente:** {df_itens.iloc[0, 5]}\n\n**Pedido:** {num_ped}")
-            with c_det2:
-                colig = df_itens.iloc[0, 6]
-                st.warning(f"**Coligação:** {colig if pd.notna(colig) and str(colig).lower() != 'nan' else 'NÃO TEM'}\n\n**NF-e:** {df_itens.iloc[0, 11]}")
-            with c_det3:
-                val_ped = df_itens['VALOR_NUM'].sum()
-                pes_ped = df_itens['PESO_NUM'].sum()
-                st.success(f"**Valor:** {formatar_moeda(val_ped)}\n\n**Peso:** {pes_ped:,.3f} kg".replace(".", ","))
+            with c_det1: st.info(f"**Cliente:** {df_itens.iloc[0, 5]}\n\n**Pedido:** {num_ped}")
+            with c_det2: st.warning(f"**Coligação:** {df_itens.iloc[0, 6]}\n\n**NF-e:** {df_itens.iloc[0, 11]}")
+            with c_det3: st.success(f"**Valor:** {formatar_moeda(df_itens['VALOR_NUM'].sum())}\n\n**Peso:** {df_itens['PESO_NUM'].sum():,.2f} kg".replace(".", ","))
 
-            with st.container(border=True):
-                st.subheader(f"🔍 Itens do Pedido: {num_ped}")
-                df_det = pd.DataFrame({
-                    'CÓDIGO': df_itens.iloc[:, 13], 
-                    'PRODUTO': df_itens.iloc[:, 15],
-                    'FABRICANTE': df_itens.iloc[:, 7],
-                    'CX': df_itens.iloc[:, 19].astype(str), 
-                    'UN': df_itens.iloc[:, 20].astype(str),
-                    'VALOR': df_itens['VALOR_NUM'].apply(formatar_moeda),
-                    'PESO': df_itens['PESO_NUM'].apply(lambda x: f"{x:,.3f} kg".replace(".", ","))
-                })
-                st.dataframe(
-                    df_det, hide_index=True, use_container_width=True,
-                    column_config={"PRODUTO": st.column_config.TextColumn(width=600)}
-                )
+            st.dataframe(
+                df_itens.iloc[:, [13, 15, 7, 19, 20, 22]].rename(columns={
+                    df_itens.columns[13]: 'CÓDIGO', df_itens.columns[15]: 'PRODUTO', 
+                    df_itens.columns[7]: 'FABRICANTE', df_itens.columns[19]: 'CX', 
+                    df_itens.columns[20]: 'UN', df_itens.columns[22]: 'VALOR'
+                }), hide_index=True, use_container_width=True
+            )
+    else:
+        st.info("Aguardando seleção de filtros...")
