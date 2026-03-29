@@ -5,13 +5,12 @@ import re
 import io
 from fpdf import FPDF
 
-# Configuração da página - Tema Escuro/Claro automático do Streamlit
+# Configuração da página
 st.set_page_config(layout="wide", page_title="CCN - Dashboard de Descarga", page_icon="📊")
 
-# --- ESTILIZAÇÃO CSS (O "Pulo do Gato" para o visual moderno) ---
+# --- ESTILIZAÇÃO CSS ---
 st.markdown("""
     <style>
-    /* Estilizando as métricas (Cards) */
     div[data-testid="stMetric"] {
         background-color: #ffffff;
         border: 1px solid #e0e0e0;
@@ -19,17 +18,11 @@ st.markdown("""
         border-radius: 12px;
         box-shadow: 2px 2px 10px rgba(0,0,0,0.05);
     }
-    /* Deixando os títulos das métricas mais profissionais */
     div[data-testid="stMetricLabel"] {
         font-size: 14px !important;
         color: #666666 !important;
         font-weight: bold;
     }
-    /* Ajustando o corpo do app */
-    .main {
-        background-color: #f8f9fa;
-    }
-    /* Estilizando botões de download */
     .stDownloadButton button {
         border-radius: 8px !important;
         border: 1px solid #d1d1d1 !important;
@@ -39,6 +32,10 @@ st.markdown("""
         border-color: #007bff !important;
         color: #007bff !important;
         background-color: #f0f7ff !important;
+    }
+    /* Estilo para a imagem da sidebar */
+    [data-testid="stSidebarNav"] {
+        padding-top: 20px;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -117,16 +114,21 @@ def load_data():
 df_fat, df_vend = load_data()
 
 if df_fat is not None:
-    # --- BARRA LATERAL (Sidebar Estilizada) ---
+    # --- BARRA LATERAL ---
     with st.sidebar:
-        st.title("Settings")
-        st.write("Escolha os parâmetros abaixo:")
+        # Inserindo o Logo no topo da barra lateral
+        try:
+            st.image("sem_fundo.png", use_container_width=True)
+        except:
+            st.warning("Logo sem_fundo.png não encontrado no Git.")
+            
+        st.write("---")
         data_sel = st.date_input("🗓️ Data da Descarga", value=date(2026, 3, 10), format="DD/MM/YYYY")
         vendedores = sorted(df_vend.iloc[:, 1].dropna().unique().tolist())
         nome_vend = st.selectbox("👤 Vendedor", vendedores)
         cod_vend = str(df_vend[df_vend.iloc[:, 1] == nome_vend].iloc[0, 0]).strip()
         st.divider()
-        st.caption("v2.0 - Dashboard CCN")
+        st.caption("v2.2 - Dashboard CCN")
 
     # Filtro de dados
     mask = (df_fat['DATA_FILTRO'].dt.date == data_sel) & \
@@ -146,17 +148,17 @@ if df_fat is not None:
         }).reset_index()
         df_resumo.columns = ['PEDIDO', 'COD_CLI', 'CLIENTE', 'VALOR', 'NFE', 'HORA']
 
-        # --- CABEÇALHO COM TÍTULO E BOTÕES NO MESMO NÍVEL ---
+        # --- CABEÇALHO ---
         head1, head2, head3 = st.columns([4, 1, 1])
         with head1:
             st.title("📋 Resumo Operacional")
             st.write(f"Vendedor: **{nome_vend}** | Data: **{data_sel.strftime('%d/%m/%Y')}**")
         with head2:
-            st.write("##") # Alinhamento
+            st.write("##")
             btn_excel = para_excel(df_resumo)
             st.download_button("📥 Excel", btn_excel, f"Resumo_{nome_vend}.xlsx", use_container_width=True)
         with head3:
-            st.write("##") # Alinhamento
+            st.write("##")
             df_pdf = df_resumo.copy()
             df_pdf['VALOR'] = df_pdf['VALOR'].apply(formatar_moeda)
             btn_pdf = para_pdf(df_pdf, f"Resumo de Carga - {nome_vend}")
@@ -164,7 +166,7 @@ if df_fat is not None:
 
         st.divider()
 
-        # --- SEÇÃO DE MÉTRICAS (KPIs como Cards) ---
+        # --- KPIs ---
         m1, m2, m3, m4 = st.columns(4)
         m1.metric("Faturamento Total", formatar_moeda(df_resumo['VALOR'].sum()))
         p_tot = df_filtrado['PESO_NUM'].sum()
@@ -191,16 +193,15 @@ if df_fat is not None:
             }
         )
 
-        # --- DETALHE DO PEDIDO SELECIONADO ---
+        # --- DETALHE ---
         if selecao.get("selection", {}).get("rows"):
             idx = selecao["selection"]["rows"][0]
             num_ped = df_resumo.iloc[idx]['PEDIDO']
             df_itens = df_filtrado[df_filtrado.iloc[:, 10] == num_ped]
             
             st.write("###")
-            with st.container(border=True): # Cria um box em volta do detalhe
+            with st.container(border=True):
                 st.subheader(f"🔍 Itens do Pedido: {num_ped}")
-                
                 df_det = pd.DataFrame({
                     'CÓDIGO': df_itens.iloc[:, 13], 
                     'PRODUTO': df_itens.iloc[:, 15],
@@ -210,10 +211,8 @@ if df_fat is not None:
                     'VALOR': df_itens['VALOR_NUM'].apply(formatar_moeda)
                 })
                 st.dataframe(
-                    df_det, 
-                    hide_index=True, 
-                    use_container_width=True,
+                    df_det, hide_index=True, use_container_width=True,
                     column_config={"PRODUTO": st.column_config.TextColumn(width=600)}
                 )
     else:
-        st.info("Selecione os filtros na barra lateral para visualizar os dados.")
+        st.info("Utilize os filtros à esquerda para carregar os dados.")
