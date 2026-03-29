@@ -5,7 +5,7 @@ import re
 
 st.set_page_config(layout="wide", page_title="Dashboard de Descarga")
 
-# 1. Função de Formatação de Moeda (Padrão Brasileiro)
+# 1. Função de Formatação de Moeda (Somente para a coluna VALOR)
 def formatar_moeda(valor):
     try:
         val = float(valor)
@@ -14,7 +14,7 @@ def formatar_moeda(valor):
     except:
         return "R$ 0,00"
 
-# 2. FUNÇÃO DE LIMPEZA NUMÉRICA (Garante que os cálculos não zerem)
+# 2. FUNÇÃO DE LIMPEZA NUMÉRICA (Garante que os cálculos funcionem)
 def limpar_para_numero(valor):
     if pd.isna(valor): return 0.0
     s = str(valor).strip().replace('R$', '').replace(' ', '')
@@ -28,15 +28,15 @@ def limpar_para_numero(valor):
     except:
         return 0.0
 
-# 3. FUNÇÃO PARA LIMPAR UNIDADES E CAIXAS (Força texto simples sem R$)
-def limpar_texto_inteiro(valor):
+# 3. FUNÇÃO PARA LIMPAR CX E UN (Garante que não apareça R$)
+def limpar_inteiro_puro(valor):
     if pd.isna(valor) or str(valor).strip() == "" or str(valor).lower() == "nan": 
-        return "0"
+        return 0
     try:
-        # Remove casas decimais se existirem (ex: 24.0 -> 24)
-        return str(int(float(str(valor).replace(',', '.'))))
+        # Retorna como INTEIRO para o Streamlit não colocar R$
+        return int(float(str(valor).replace(',', '.')))
     except:
-        return str(valor).split('.')[0]
+        return 0
 
 @st.cache_data
 def load_data():
@@ -48,9 +48,13 @@ def load_data():
         # Limpeza de Data
         df_f['DATA_FILTRO'] = pd.to_datetime(df_f.iloc[:, 9], dayfirst=True, errors='coerce')
         
-        # Limpeza Numérica para KPIs e Cálculos
+        # Limpeza Numérica para KPIs
         df_f['VALOR_NUM'] = df_f.iloc[:, 22].apply(limpar_para_numero)
         df_f['PESO_NUM'] = df_f.iloc[:, 26].apply(limpar_para_numero)
+        
+        # Limpeza de CX e UN (Índices 19 e 20)
+        df_f.iloc[:, 19] = df_f.iloc[:, 19].apply(limpar_inteiro_puro)
+        df_f.iloc[:, 20] = df_f.iloc[:, 20].apply(limpar_inteiro_puro)
         
         # --- LIMPEZA DO PRODUTO (Retirar Fabricante da Descrição) ---
         def remover_fabricante(row):
@@ -123,7 +127,7 @@ if df_fat is not None:
                 "PEDIDO": st.column_config.TextColumn(width="small"),
                 "HORA": st.column_config.TextColumn(width="small"),
                 "COD_CLI": st.column_config.TextColumn(width="small"),
-                "CLIENTE": st.column_config.TextColumn(width="large"),
+                "CLIENTE": st.column_config.TextColumn(width=600), # BEM LARGO
                 "VALOR": st.column_config.TextColumn(width="medium"),
                 "NFE": st.column_config.TextColumn(width="small")
             }
@@ -150,14 +154,13 @@ if df_fat is not None:
                 pes_ped = df_itens['PESO_NUM'].sum()
                 st.success(f"**Valor:** {formatar_moeda(val_ped)}\n\n**Peso:** {pes_ped:,.3f} kg".replace(".", ","))
 
-            # Tabela de Detalhes (Sem EAN e sem formatação de moeda em CX e UN)
-            # Aplicamos limpar_texto_inteiro aqui para garantir que são apenas números
+            # Tabela de Detalhes (Sem EAN)
             df_det = pd.DataFrame({
                 'CÓDIGO': df_itens.iloc[:, 13],
                 'PRODUTO': df_itens.iloc[:, 15],
                 'FABRICANTE': df_itens.iloc[:, 7],
-                'CX': df_itens.iloc[:, 19].apply(limpar_texto_inteiro),
-                'UN': df_itens.iloc[:, 20].apply(limpar_texto_inteiro),
+                'CX': df_itens.iloc[:, 19], # Agora forçado como número puro
+                'UN': df_itens.iloc[:, 20], # Agora forçado como número puro
                 'VALOR': df_itens['VALOR_NUM'].apply(formatar_moeda),
                 'PESO': df_itens['PESO_NUM'].apply(lambda x: f"{x:,.3f} kg".replace(".", ","))
             })
@@ -168,10 +171,10 @@ if df_fat is not None:
                 use_container_width=True,
                 column_config={
                     "CÓDIGO": st.column_config.TextColumn(width="small"),
-                    "PRODUTO": st.column_config.TextColumn(width="large"),
+                    "PRODUTO": st.column_config.TextColumn(width=500), # BEM LARGO
                     "FABRICANTE": st.column_config.TextColumn(width="medium"),
-                    "CX": st.column_config.TextColumn(width="small"), # Força exibição como Texto
-                    "UN": st.column_config.TextColumn(width="small"), # Força exibição como Texto
+                    "CX": st.column_config.NumberColumn(format="%d"), # FORÇA INTEIRO (SEM R$)
+                    "UN": st.column_config.NumberColumn(format="%d"), # FORÇA INTEIRO (SEM R$)
                     "VALOR": st.column_config.TextColumn(width="medium")
                 }
             )
