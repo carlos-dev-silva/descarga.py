@@ -30,15 +30,6 @@ def limpar_para_numero(valor):
     except:
         return 0.0
 
-# 3. FUNÇÃO PARA O EAN (Remove o 7,90E+12)
-def limpar_ean(valor):
-    if pd.isna(valor) or str(valor).strip() == "": return ""
-    try:
-        # Converte para float e depois para string sem casas decimais
-        return f"{float(valor):.0f}"
-    except:
-        return str(valor).strip().split('.')[0]
-
 @st.cache_data
 def load_data():
     try:
@@ -52,9 +43,6 @@ def load_data():
         # Limpeza Numérica (Valor e Peso)
         df_f['VALOR_NUM'] = df_f.iloc[:, 22].apply(limpar_para_numero)
         df_f['PESO_NUM'] = df_f.iloc[:, 26].apply(limpar_para_numero)
-        
-        # Limpeza de EAN
-        df_f.iloc[:, 14] = df_f.iloc[:, 14].apply(limpar_ean)
         
         # --- LIMPEZA DO PRODUTO (Retirar Fabricante da Descrição) ---
         def remover_fabricante(row):
@@ -155,7 +143,7 @@ if df_fat is not None:
                 p_ped = df_itens['PESO_NUM'].sum()
                 st.success(f"**Valor:** {formatar_moeda(v_ped)}\n\n**Peso:** {p_ped:,.3f} kg".replace(".", ","))
 
-            # Tabela de Detalhes
+            # Tabela de Detalhes (Sem EAN)
             df_det = pd.DataFrame({
                 'CÓDIGO': df_itens.iloc[:, 13],
                 'PRODUTO': df_itens.iloc[:, 15],
@@ -163,8 +151,7 @@ if df_fat is not None:
                 'CX': df_itens.iloc[:, 19],
                 'UN': df_itens.iloc[:, 20],
                 'VALOR': df_itens['VALOR_NUM'].apply(formatar_moeda),
-                'PESO': df_itens['PESO_NUM'].apply(lambda x: f"{x:,.3f} kg".replace(".", ",")),
-                'EAN': df_itens.iloc[:, 14]
+                'PESO': df_itens['PESO_NUM'].apply(lambda x: f"{x:,.3f} kg".replace(".", ","))
             })
             
             st.dataframe(
@@ -175,6 +162,6 @@ if df_fat is not None:
                     "CÓDIGO": st.column_config.TextColumn(width="small"), # REDUZIDO
                     "PRODUTO": st.column_config.TextColumn(width="large"), # AUMENTADO
                     "FABRICANTE": st.column_config.TextColumn(width="medium"),
-                    "EAN": st.column_config.TextColumn(width="medium")
+                    "VALOR": st.column_config.TextColumn(width="medium")
                 }
             )
