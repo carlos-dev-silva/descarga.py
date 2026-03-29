@@ -7,7 +7,7 @@ from fpdf import FPDF
 
 st.set_page_config(layout="wide", page_title="Dashboard de Descarga")
 
-# --- FUNÇÕES DE FORMATAÇÃO ---
+# --- FUNÇÕES DE APOIO ---
 def formatar_moeda(valor):
     try:
         val = float(valor)
@@ -28,34 +28,35 @@ def limpar_para_numero(valor):
     except:
         return 0.0
 
-# --- FUNÇÕES DE EXPORTAÇÃO ---
+# --- EXPORTAÇÃO ---
 def para_excel(df):
     output = io.BytesIO()
     with pd.ExcelWriter(output, engine='xlsxwriter') as writer:
-        df.to_excel(writer, index=False, sheet_name='Dados')
+        df.to_excel(writer, index=False, sheet_name='Resumo')
     return output.getvalue()
 
 def para_pdf(df, titulo_doc):
     pdf = FPDF()
     pdf.add_page()
     pdf.set_font("Arial", 'B', 14)
-    pdf.cell(200, 10, txt=titulo_doc, ln=1, align='C')
-    pdf.ln(10)
+    pdf.cell(190, 10, txt=titulo_doc, ln=1, align='C')
+    pdf.ln(5)
     
-    # Cabeçalhos
-    pdf.set_font("Arial", 'B', 10)
-    col_width = 190 / len(df.columns)
-    for col in df.columns:
-        pdf.cell(col_width, 10, str(col), border=1)
+    pdf.set_font("Arial", 'B', 8)
+    # Define larguras fixas simples para caber na folha
+    pdf.cell(30, 8, "PEDIDO", 1)
+    pdf.cell(100, 8, "CLIENTE", 1)
+    pdf.cell(30, 8, "VALOR", 1)
+    pdf.cell(30, 8, "HORA", 1)
     pdf.ln()
-    
-    # Dados
-    pdf.set_font("Arial", '', 9)
+
+    pdf.set_font("Arial", '', 8)
     for _, row in df.iterrows():
-        for item in row:
-            pdf.cell(col_width, 10, str(item)[:15], border=1) # Limita caracteres para não vazar
+        pdf.cell(30, 8, str(row['PEDIDO']), 1)
+        pdf.cell(100, 8, str(row['CLIENTE'])[:50], 1)
+        pdf.cell(30, 8, str(row['VALOR']), 1)
+        pdf.cell(30, 8, str(row['HORA']), 1)
         pdf.ln()
-        
     return pdf.output(dest='S').encode('latin-1')
 
 @st.cache_data
@@ -81,6 +82,7 @@ def load_data():
 df_fat, df_vend = load_data()
 
 if df_fat is not None:
+    # --- FILTROS LATERAIS ---
     with st.sidebar:
         st.header("📌 Filtros")
         data_sel = st.date_input("Data da Descarga", value=date(2026, 3, 10), format="DD/MM/YYYY")
@@ -104,42 +106,47 @@ if df_fat is not None:
         }).reset_index()
         df_resumo.columns = ['PEDIDO', 'COD_CLI', 'CLIENTE', 'VALOR', 'NFE', 'HORA']
 
-        # KPIs
-        c1, c2 = st.columns(2)
-        c1.metric("TOTAL VENDAS", formatar_moeda(df_resumo['VALOR'].sum()))
+        # 1. KPIs (Indicadores)
+        kpi1, kpi2 = st.columns(2)
+        kpi1.metric("TOTAL VENDAS", formatar_moeda(df_resumo['VALOR'].sum()))
         p_tot = df_filtrado['PESO_NUM'].sum()
-        c2.metric("PESO TOTAL", f"{p_tot:,.3f} kg".replace(".", ","))
+        kpi2.metric("PESO TOTAL", f"{p_tot:,.3f} kg".replace(".", ","))
 
-        # --- BOTÕES DE EXPORTAÇÃO (LADO A LADO) ---
-        st.write("---")
-        exp1, exp2 = st.columns(2)
-        with exp1:
+        # 2. BOTÕES ALINHADOS À DIREITA (Abaixo dos KPIs)
+        # Criamos 4 colunas. A primeira é um "espaçador" gigante.
+        espaco, col_ex, col_pdf = st.columns([5, 1.2, 1.2])
+        
+        with col_ex:
             btn_excel = para_excel(df_resumo)
-            st.download_button("📥 Baixar Resumo (EXCEL)", btn_excel, f"Resumo_{data_sel}.xlsx")
-        with exp2:
-            btn_pdf = para_pdf(df_resumo, f"Resumo de Carga - {nome_vend}")
-            st.download_button("📄 Baixar Resumo (PDF)", btn_pdf, f"Resumo_{data_sel}.pdf")
-        st.write("---")
+            st.download_button("📥 Excel", btn_excel, f"Resumo_{nome_vend}.xlsx", use_container_width=True)
+        with col_pdf:
+            # Preparamos o PDF com o valor formatado para o arquivo
+            df_pdf = df_resumo.copy()
+            df_pdf['VALOR'] = df_pdf['VALOR'].apply(formatar_moeda)
+            btn_pdf = para_pdf(df_pdf, f"Resumo de Carga - {nome_vend}")
+            st.download_button("📄 PDF", btn_pdf, f"Resumo_{nome_vend}.pdf", use_container_width=True)
 
+        # 3. TABELA DE RESUMO
         df_disp = df_resumo.copy()
         df_disp['VALOR'] = df_disp['VALOR'].apply(formatar_moeda)
         selecao = st.dataframe(df_disp, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row",
                                column_config={"CLIENTE": st.column_config.TextColumn(width=600)})
 
+        # 4. DETALHE DO PEDIDO
         if selecao.get("selection", {}).get("rows"):
             idx = selecao["selection"]["rows"][0]
             num_ped = df_resumo.iloc[idx]['PEDIDO']
             df_itens = df_filtrado[df_filtrado.iloc[:, 10] == num_ped]
             
+            st.divider()
             st.subheader(f"🔍 Detalhes: {num_ped}")
             df_det = pd.DataFrame({
-                'CÓDIGO': df_itens.iloc[:, 13], 'PRODUTO': df_itens.iloc[:, 15],
-                'CX': df_itens.iloc[:, 19].astype(str), 'UN': df_itens.iloc[:, 20].astype(str),
+                'CÓDIGO': df_itens.iloc[:, 13], 
+                'PRODUTO': df_itens.iloc[:, 15],
+                'FABRICANTE': df_itens.iloc[:, 7],
+                'CX': df_itens.iloc[:, 19].astype(str), 
+                'UN': df_itens.iloc[:, 20].astype(str),
                 'VALOR': df_itens['VALOR_NUM'].apply(formatar_moeda)
             })
             st.dataframe(df_det, hide_index=True, use_container_width=True,
                          column_config={"PRODUTO": st.column_config.TextColumn(width=500)})
-
-            # Exportação do pedido específico
-            det_excel = para_excel(df_det)
-            st.download_button(f"📥 Baixar Pedido {num_ped} (Excel)", det_excel, f"Pedido_{num_ped}.xlsx")
