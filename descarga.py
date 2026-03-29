@@ -8,7 +8,7 @@ from fpdf import FPDF
 # Configuração da página
 st.set_page_config(layout="wide", page_title="CCN - Dashboard de Descarga", page_icon="📊")
 
-# --- ESTILIZAÇÃO CSS ---
+# --- ESTILIZAÇÃO CSS (Visual Moderno) ---
 st.markdown("""
     <style>
     div[data-testid="stMetric"] {
@@ -32,10 +32,6 @@ st.markdown("""
         border-color: #007bff !important;
         color: #007bff !important;
         background-color: #f0f7ff !important;
-    }
-    /* Estilo para a imagem da sidebar */
-    [data-testid="stSidebarNav"] {
-        padding-top: 20px;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -116,19 +112,17 @@ df_fat, df_vend = load_data()
 if df_fat is not None:
     # --- BARRA LATERAL ---
     with st.sidebar:
-        # Inserindo o Logo no topo da barra lateral
         try:
             st.image("sem_fundo.png", use_container_width=True)
         except:
-            st.warning("Logo sem_fundo.png não encontrado no Git.")
-            
+            pass
         st.write("---")
         data_sel = st.date_input("🗓️ Data da Descarga", value=date(2026, 3, 10), format="DD/MM/YYYY")
         vendedores = sorted(df_vend.iloc[:, 1].dropna().unique().tolist())
         nome_vend = st.selectbox("👤 Vendedor", vendedores)
         cod_vend = str(df_vend[df_vend.iloc[:, 1] == nome_vend].iloc[0, 0]).strip()
         st.divider()
-        st.caption("v2.2 - Dashboard CCN")
+        st.caption("v2.3 - Dashboard CCN")
 
     # Filtro de dados
     mask = (df_fat['DATA_FILTRO'].dt.date == data_sel) & \
@@ -144,9 +138,10 @@ if df_fat is not None:
             df_filtrado.columns[5]: 'first', 
             'VALOR_NUM': 'sum', 
             df_filtrado.columns[11]: 'first', 
-            df_filtrado.columns[8]: 'first'
+            df_filtrado.columns[8]: 'first',
+            df_filtrado.columns[6]: 'first'  # Coligação
         }).reset_index()
-        df_resumo.columns = ['PEDIDO', 'COD_CLI', 'CLIENTE', 'VALOR', 'NFE', 'HORA']
+        df_resumo.columns = ['PEDIDO', 'COD_CLI', 'CLIENTE', 'VALOR', 'NFE', 'HORA', 'COLIGACAO']
 
         # --- CABEÇALHO ---
         head1, head2, head3 = st.columns([4, 1, 1])
@@ -155,7 +150,7 @@ if df_fat is not None:
             st.write(f"Vendedor: **{nome_vend}** | Data: **{data_sel.strftime('%d/%m/%Y')}**")
         with head2:
             st.write("##")
-            btn_excel = para_excel(df_resumo)
+            btn_excel = para_excel(df_resumo[['PEDIDO', 'COD_CLI', 'CLIENTE', 'VALOR', 'NFE', 'HORA']])
             st.download_button("📥 Excel", btn_excel, f"Resumo_{nome_vend}.xlsx", use_container_width=True)
         with head3:
             st.write("##")
@@ -177,29 +172,37 @@ if df_fat is not None:
         st.write("###")
 
         # --- TABELA DE RESUMO ---
-        df_disp = df_resumo.copy()
+        df_disp = df_resumo[['PEDIDO', 'COD_CLI', 'CLIENTE', 'VALOR', 'NFE', 'HORA']].copy()
         df_disp['VALOR'] = df_disp['VALOR'].apply(formatar_moeda)
         selecao = st.dataframe(
-            df_disp, 
-            use_container_width=True, 
-            hide_index=True, 
-            on_select="rerun", 
-            selection_mode="single-row",
+            df_disp, use_container_width=True, hide_index=True, 
+            on_select="rerun", selection_mode="single-row",
             column_config={
                 "COD_CLI": st.column_config.TextColumn("Cód. Cliente", width="small"),
                 "CLIENTE": st.column_config.TextColumn("Nome do Cliente", width=600),
-                "PEDIDO": st.column_config.TextColumn("Nº Pedido", width="small"),
-                "VALOR": st.column_config.TextColumn("Total Pedido")
+                "PEDIDO": st.column_config.TextColumn("Nº Pedido", width="small")
             }
         )
 
-        # --- DETALHE ---
+        # --- DETALHE DO PEDIDO SELECIONADO (AS 6 INFORMAÇÕES VOLTARAM) ---
         if selecao.get("selection", {}).get("rows"):
             idx = selecao["selection"]["rows"][0]
             num_ped = df_resumo.iloc[idx]['PEDIDO']
             df_itens = df_filtrado[df_filtrado.iloc[:, 10] == num_ped]
             
             st.write("###")
+            # Restaurando o cabeçalho de detalhes com as 6 infos
+            c_det1, c_det2, c_det3 = st.columns(3)
+            with c_det1:
+                st.info(f"**Cliente:** {df_itens.iloc[0, 5]}\n\n**Pedido:** {num_ped}")
+            with c_det2:
+                colig = df_itens.iloc[0, 6]
+                st.warning(f"**Coligação:** {colig if pd.notna(colig) and str(colig).lower() != 'nan' else 'NÃO TEM'}\n\n**NF-e:** {df_itens.iloc[0, 11]}")
+            with c_det3:
+                val_ped = df_itens['VALOR_NUM'].sum()
+                pes_ped = df_itens['PESO_NUM'].sum()
+                st.success(f"**Valor:** {formatar_moeda(val_ped)}\n\n**Peso:** {pes_ped:,.3f} kg".replace(".", ","))
+
             with st.container(border=True):
                 st.subheader(f"🔍 Itens do Pedido: {num_ped}")
                 df_det = pd.DataFrame({
@@ -208,7 +211,8 @@ if df_fat is not None:
                     'FABRICANTE': df_itens.iloc[:, 7],
                     'CX': df_itens.iloc[:, 19].astype(str), 
                     'UN': df_itens.iloc[:, 20].astype(str),
-                    'VALOR': df_itens['VALOR_NUM'].apply(formatar_moeda)
+                    'VALOR': df_itens['VALOR_NUM'].apply(formatar_moeda),
+                    'PESO': df_itens['PESO_NUM'].apply(lambda x: f"{x:,.3f} kg".replace(".", ","))
                 })
                 st.dataframe(
                     df_det, hide_index=True, use_container_width=True,
