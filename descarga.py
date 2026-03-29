@@ -38,22 +38,25 @@ def para_excel(df):
 def para_pdf(df, titulo_doc):
     pdf = FPDF()
     pdf.add_page()
-    pdf.set_font("Arial", 'B', 14)
+    pdf.set_font("Arial", 'B', 12)
     pdf.cell(190, 10, txt=titulo_doc, ln=1, align='C')
     pdf.ln(5)
     
+    # Cabeçalho da Tabela no PDF (Incluindo COD_CLI)
     pdf.set_font("Arial", 'B', 8)
-    # Define larguras fixas simples para caber na folha
-    pdf.cell(30, 8, "PEDIDO", 1)
-    pdf.cell(100, 8, "CLIENTE", 1)
+    pdf.cell(20, 8, "PEDIDO", 1)
+    pdf.cell(20, 8, "COD", 1) # Nova Coluna
+    pdf.cell(90, 8, "CLIENTE", 1)
     pdf.cell(30, 8, "VALOR", 1)
     pdf.cell(30, 8, "HORA", 1)
     pdf.ln()
 
-    pdf.set_font("Arial", '', 8)
+    # Linhas da Tabela
+    pdf.set_font("Arial", '', 7)
     for _, row in df.iterrows():
-        pdf.cell(30, 8, str(row['PEDIDO']), 1)
-        pdf.cell(100, 8, str(row['CLIENTE'])[:50], 1)
+        pdf.cell(20, 8, str(row['PEDIDO']), 1)
+        pdf.cell(20, 8, str(row['COD_CLI']), 1)
+        pdf.cell(90, 8, str(row['CLIENTE'])[:55], 1) # Limita para não vazar a célula
         pdf.cell(30, 8, str(row['VALOR']), 1)
         pdf.cell(30, 8, str(row['HORA']), 1)
         pdf.ln()
@@ -82,7 +85,6 @@ def load_data():
 df_fat, df_vend = load_data()
 
 if df_fat is not None:
-    # --- FILTROS LATERAIS ---
     with st.sidebar:
         st.header("📌 Filtros")
         data_sel = st.date_input("Data da Descarga", value=date(2026, 3, 10), format="DD/MM/YYYY")
@@ -101,38 +103,44 @@ if df_fat is not None:
     
     if not df_filtrado.empty:
         df_resumo = df_filtrado.groupby(df_filtrado.columns[10]).agg({
-            df_filtrado.columns[0]: 'first', df_filtrado.columns[5]: 'first',
-            'VALOR_NUM': 'sum', df_filtrado.columns[11]: 'first', df_filtrado.columns[8]: 'first'
+            df_filtrado.columns[0]: 'first', # COD_CLI
+            df_filtrado.columns[5]: 'first', # CLIENTE
+            'VALOR_NUM': 'sum', 
+            df_filtrado.columns[11]: 'first', # NFE
+            df_filtrado.columns[8]: 'first'   # HORA
         }).reset_index()
         df_resumo.columns = ['PEDIDO', 'COD_CLI', 'CLIENTE', 'VALOR', 'NFE', 'HORA']
 
-        # 1. KPIs (Indicadores)
-        kpi1, kpi2 = st.columns(2)
-        kpi1.metric("TOTAL VENDAS", formatar_moeda(df_resumo['VALOR'].sum()))
-        p_tot = df_filtrado['PESO_NUM'].sum()
-        kpi2.metric("PESO TOTAL", f"{p_tot:,.3f} kg".replace(".", ","))
-
-        # 2. BOTÕES ALINHADOS À DIREITA (Abaixo dos KPIs)
-        # Criamos 4 colunas. A primeira é um "espaçador" gigante.
-        espaco, col_ex, col_pdf = st.columns([5, 1.2, 1.2])
+        # --- KPIs E BOTÕES NA MESMA LINHA (Para subir os botões) ---
+        c1, c2, c3, c4 = st.columns([1.5, 1.5, 0.7, 0.7])
         
-        with col_ex:
+        with c1:
+            st.metric("TOTAL VENDAS", formatar_moeda(df_resumo['VALOR'].sum()))
+        with c2:
+            p_tot = df_filtrado['PESO_NUM'].sum()
+            st.metric("PESO TOTAL", f"{p_tot:,.3f} kg".replace(".", ","))
+        
+        with c3:
+            st.write("###") # Espaçador para alinhar os botões com a parte de baixo dos KPIs
             btn_excel = para_excel(df_resumo)
             st.download_button("📥 Excel", btn_excel, f"Resumo_{nome_vend}.xlsx", use_container_width=True)
-        with col_pdf:
-            # Preparamos o PDF com o valor formatado para o arquivo
+        with c4:
+            st.write("###")
             df_pdf = df_resumo.copy()
             df_pdf['VALOR'] = df_pdf['VALOR'].apply(formatar_moeda)
             btn_pdf = para_pdf(df_pdf, f"Resumo de Carga - {nome_vend}")
             st.download_button("📄 PDF", btn_pdf, f"Resumo_{nome_vend}.pdf", use_container_width=True)
 
-        # 3. TABELA DE RESUMO
+        # --- TABELA DE RESUMO ---
         df_disp = df_resumo.copy()
         df_disp['VALOR'] = df_disp['VALOR'].apply(formatar_moeda)
         selecao = st.dataframe(df_disp, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row",
-                               column_config={"CLIENTE": st.column_config.TextColumn(width=600)})
+                               column_config={
+                                   "COD_CLI": st.column_config.TextColumn(width="small"),
+                                   "CLIENTE": st.column_config.TextColumn(width=600)
+                               })
 
-        # 4. DETALHE DO PEDIDO
+        # --- DETALHE DO PEDIDO ---
         if selecao.get("selection", {}).get("rows"):
             idx = selecao["selection"]["rows"][0]
             num_ped = df_resumo.iloc[idx]['PEDIDO']
