@@ -5,7 +5,7 @@ import re
 
 st.set_page_config(layout="wide", page_title="Dashboard de Descarga")
 
-# 1. Função de Formatação de Moeda (Somente para a coluna VALOR)
+# 1. Função de Formatação de Moeda (Padrão Brasileiro)
 def formatar_moeda(valor):
     try:
         val = float(valor)
@@ -14,7 +14,7 @@ def formatar_moeda(valor):
     except:
         return "R$ 0,00"
 
-# 2. FUNÇÃO DE LIMPEZA NUMÉRICA (Garante que os cálculos funcionem)
+# 2. FUNÇÃO DE LIMPEZA NUMÉRICA (Garante que Valor e Peso funcionem)
 def limpar_para_numero(valor):
     if pd.isna(valor): return 0.0
     s = str(valor).strip().replace('R$', '').replace(' ', '')
@@ -28,33 +28,19 @@ def limpar_para_numero(valor):
     except:
         return 0.0
 
-# 3. FUNÇÃO PARA LIMPAR CX E UN (Garante que não apareça R$)
-def limpar_inteiro_puro(valor):
-    if pd.isna(valor) or str(valor).strip() == "" or str(valor).lower() == "nan": 
-        return 0
-    try:
-        # Retorna como INTEIRO para o Streamlit não colocar R$
-        return int(float(str(valor).replace(',', '.')))
-    except:
-        return 0
-
 @st.cache_data
 def load_data():
     try:
-        # Lê os CSVs do seu GitHub
+        # Lendo os CSVs (dtype=str para manter os dados originais)
         df_f = pd.read_csv("Faturamento.csv", sep=";", encoding='latin-1', dtype=str) 
         df_v = pd.read_csv("Vendedores.csv", sep=";", encoding='latin-1', dtype=str)
         
         # Limpeza de Data
         df_f['DATA_FILTRO'] = pd.to_datetime(df_f.iloc[:, 9], dayfirst=True, errors='coerce')
         
-        # Limpeza Numérica para KPIs
+        # Criamos colunas numéricas apenas para os cálculos de soma e peso
         df_f['VALOR_NUM'] = df_f.iloc[:, 22].apply(limpar_para_numero)
         df_f['PESO_NUM'] = df_f.iloc[:, 26].apply(limpar_para_numero)
-        
-        # Limpeza de CX e UN (Índices 19 e 20)
-        df_f.iloc[:, 19] = df_f.iloc[:, 19].apply(limpar_inteiro_puro)
-        df_f.iloc[:, 20] = df_f.iloc[:, 20].apply(limpar_inteiro_puro)
         
         # --- LIMPEZA DO PRODUTO (Retirar Fabricante da Descrição) ---
         def remover_fabricante(row):
@@ -92,7 +78,7 @@ if df_fat is not None:
     df_filtrado = df_fat[mask].copy()
     df_filtrado = df_filtrado.drop_duplicates(subset=[df_filtrado.columns[10], df_filtrado.columns[15]])
 
-    # --- RESUMO DOS PEDIDOS ---
+    # --- DASHBOARD ---
     st.subheader("📋 Resumo dos Pedidos do Dia")
     
     if df_filtrado.empty:
@@ -107,13 +93,11 @@ if df_fat is not None:
         }).reset_index()
         df_resumo.columns = ['PEDIDO', 'COD_CLI', 'CLIENTE', 'VALOR', 'NFE', 'HORA']
 
-        # KPIs
         c1, c2 = st.columns(2)
         c1.metric("TOTAL VENDAS", formatar_moeda(df_resumo['VALOR'].sum()))
         p_total = df_filtrado['PESO_NUM'].sum()
         c2.metric("PESO TOTAL", f"{p_total:,.3f} kg".replace(",", "X").replace(".", ",").replace("X", "."))
 
-        # Tabela Principal
         df_display = df_resumo.copy()
         df_display['VALOR'] = df_display['VALOR'].apply(formatar_moeda)
         
@@ -127,7 +111,7 @@ if df_fat is not None:
                 "PEDIDO": st.column_config.TextColumn(width="small"),
                 "HORA": st.column_config.TextColumn(width="small"),
                 "COD_CLI": st.column_config.TextColumn(width="small"),
-                "CLIENTE": st.column_config.TextColumn(width=600), # BEM LARGO
+                "CLIENTE": st.column_config.TextColumn(width="large"),
                 "VALOR": st.column_config.TextColumn(width="medium"),
                 "NFE": st.column_config.TextColumn(width="small")
             }
@@ -135,7 +119,7 @@ if df_fat is not None:
 
         st.divider() 
 
-        # --- DETALHE DO PEDIDO ---
+        # --- DETALHE ---
         st.subheader("🔍 Detalhe do Pedido Selecionado")
         
         if selecao.get("selection", {}).get("rows"):
@@ -150,17 +134,18 @@ if df_fat is not None:
                 colig = df_itens.iloc[0, 6]
                 st.warning(f"**Coligação:** {colig if pd.notna(colig) else 'NÃO TEM'}\n\n**NF-e:** {df_itens.iloc[0, 11]}")
             with col_info3:
-                val_ped = df_itens['VALOR_NUM'].sum()
-                pes_ped = df_itens['PESO_NUM'].sum()
-                st.success(f"**Valor:** {formatar_moeda(val_ped)}\n\n**Peso:** {pes_ped:,.3f} kg".replace(".", ","))
+                v_ped = df_itens['VALOR_NUM'].sum()
+                p_ped = df_itens['PESO_NUM'].sum()
+                st.success(f"**Valor:** {formatar_moeda(v_ped)}\n\n**Peso:** {p_ped:,.3f} kg".replace(".", ","))
 
             # Tabela de Detalhes (Sem EAN)
+            # Para evitar o "R$", forçamos a CX e UN a serem Strings puras
             df_det = pd.DataFrame({
                 'CÓDIGO': df_itens.iloc[:, 13],
                 'PRODUTO': df_itens.iloc[:, 15],
                 'FABRICANTE': df_itens.iloc[:, 7],
-                'CX': df_itens.iloc[:, 19], # Agora forçado como número puro
-                'UN': df_itens.iloc[:, 20], # Agora forçado como número puro
+                'CX': df_itens.iloc[:, 19].astype(str),
+                'UN': df_itens.iloc[:, 20].astype(str),
                 'VALOR': df_itens['VALOR_NUM'].apply(formatar_moeda),
                 'PESO': df_itens['PESO_NUM'].apply(lambda x: f"{x:,.3f} kg".replace(".", ","))
             })
@@ -171,10 +156,9 @@ if df_fat is not None:
                 use_container_width=True,
                 column_config={
                     "CÓDIGO": st.column_config.TextColumn(width="small"),
-                    "PRODUTO": st.column_config.TextColumn(width=500), # BEM LARGO
+                    "PRODUTO": st.column_config.TextColumn(width="large"),
                     "FABRICANTE": st.column_config.TextColumn(width="medium"),
-                    "CX": st.column_config.NumberColumn(format="%d"), # FORÇA INTEIRO (SEM R$)
-                    "UN": st.column_config.NumberColumn(format="%d"), # FORÇA INTEIRO (SEM R$)
-                    "VALOR": st.column_config.TextColumn(width="medium")
+                    "CX": st.column_config.TextColumn(width="small"), # Força texto
+                    "UN": st.column_config.TextColumn(width="small")  # Força texto
                 }
             )
