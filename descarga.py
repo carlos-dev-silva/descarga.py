@@ -31,21 +31,24 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- CLASSE PDF ---
+# --- CLASSE PDF PROFISSIONAL ---
 class PDF(FPDF):
     def header(self):
-        try: self.image('sem_fundo.png', 10, 8, 33)
-        except: pass
+        try:
+            self.image('sem_fundo.png', 10, 8, 33)
+        except:
+            pass
         self.set_font('Arial', 'B', 15)
         self.cell(80)
-        self.cell(30, 10, 'RELATÓRIO DE PERFORMANCE DE CARGA', 0, 0, 'C')
+        self.cell(30, 10, 'RELATORIO DE PERFORMANCE DE CARGA', 0, 0, 'C')
         self.ln(20)
+
     def footer(self):
         self.set_y(-15)
         self.set_font('Arial', 'I', 8)
-        self.cell(0, 10, f'Página {self.page_no()} | CCN BI', 0, 0, 'C')
+        self.cell(0, 10, f'Pagina {self.page_no()} | CCN BI', 0, 0, 'C')
 
-# --- FUNÇÕES ---
+# --- FUNÇÕES DE APOIO ---
 def formatar_moeda(valor):
     try:
         val = float(valor)
@@ -60,6 +63,53 @@ def limpar_para_numero(valor):
         elif ',' in s: s = s.replace(',', '.')
         return float(s)
     except: return 0.0
+
+# --- MOTOR DE GERAÇÃO DE PDF ---
+def gerar_pdf_completo(df, vendedor, data_doc, faturamento, peso, qtd):
+    pdf = PDF()
+    pdf.add_page()
+    
+    # Box de Resumo Superior
+    pdf.set_fill_color(240, 240, 240)
+    pdf.set_font('Arial', 'B', 10)
+    pdf.cell(190, 10, f" Vendedor: {vendedor} | Data: {data_doc}", 1, 1, 'L', fill=True)
+    pdf.ln(5)
+
+    # Mini KPIs no PDF
+    pdf.set_font('Arial', 'B', 11)
+    pdf.cell(63, 10, "Faturamento Total", 1, 0, 'C')
+    pdf.cell(63, 10, "Peso Total", 1, 0, 'C')
+    pdf.cell(64, 10, "Pedidos", 1, 1, 'C')
+    
+    pdf.set_font('Arial', '', 10)
+    pdf.cell(63, 10, faturamento, 1, 0, 'C')
+    pdf.cell(63, 10, f"{peso:,.2f} kg".replace(".", ","), 1, 0, 'C')
+    pdf.cell(64, 10, str(qtd), 1, 1, 'C')
+    pdf.ln(10)
+
+    # Cabeçalho da Tabela
+    pdf.set_fill_color(0, 51, 102) 
+    pdf.set_text_color(255, 255, 255)
+    pdf.set_font('Arial', 'B', 9)
+    pdf.cell(20, 10, "PEDIDO", 1, 0, 'C', fill=True)
+    pdf.cell(20, 10, "COD", 1, 0, 'C', fill=True)
+    pdf.cell(90, 10, "CLIENTE", 1, 0, 'C', fill=True)
+    pdf.cell(30, 10, "VALOR", 1, 0, 'C', fill=True)
+    pdf.cell(30, 10, "HORA", 1, 1, 'C', fill=True)
+
+    # Dados da Tabela
+    pdf.set_text_color(0, 0, 0)
+    pdf.set_font('Arial', '', 8)
+    for i, row in df.iterrows():
+        preenchimento = True if i % 2 == 0 else False
+        pdf.set_fill_color(245, 245, 245)
+        pdf.cell(20, 8, str(row['PEDIDO']), 1, 0, 'C', fill=preenchimento)
+        pdf.cell(20, 8, str(row['COD_CLI']), 1, 0, 'C', fill=preenchimento)
+        pdf.cell(90, 8, str(row['CLIENTE'])[:55], 1, 0, 'L', fill=preenchimento)
+        pdf.cell(30, 8, str(row['VALOR']), 1, 0, 'C', fill=preenchimento)
+        pdf.cell(30, 8, str(row['HORA']), 1, 1, 'C', fill=preenchimento)
+        
+    return pdf.output(dest='S').encode('latin-1')
 
 @st.cache_data
 def load_data():
@@ -93,7 +143,7 @@ if df_fat is not None:
         nome_vend = st.selectbox("👤 Vendedor", vendedores)
         cod_vend = str(df_vend[df_vend.iloc[:, 1] == nome_vend].iloc[0, 0]).strip()
         st.divider()
-        st.caption("v4.1 - CCN Intelligence")
+        st.caption("v4.2 - CCN Intelligence")
 
     # Filtro Base
     mask = (df_fat['DATA_FILTRO'].dt.date == data_sel) & \
@@ -117,6 +167,10 @@ if df_fat is not None:
             st.title("🚀 Performance de Vendas")
             st.write(f"Vendedor: **{nome_vend}** | **{data_sel.strftime('%d/%m/%Y')}**")
         
+        fat_total_str = formatar_moeda(df_resumo['VALOR'].sum())
+        peso_total = df_filtrado['PESO_NUM'].sum()
+        qtd_pedidos = len(df_resumo)
+
         with h2:
             st.write("##")
             output_ex = io.BytesIO()
@@ -126,22 +180,19 @@ if df_fat is not None:
         
         with h3:
             st.write("##")
+            # PDF AGORA CHAMA A FUNÇÃO COMPLETA
             df_pdf = df_resumo.copy()
             df_pdf['VALOR'] = df_pdf['VALOR'].apply(formatar_moeda)
-            pdf = PDF()
-            pdf.add_page()
-            pdf.set_font('Arial', 'B', 10)
-            pdf.cell(190, 10, f"Vendedor: {nome_vend} | Faturamento: {formatar_moeda(df_resumo['VALOR'].sum())}", 1, 1, 'C')
-            st.download_button("📄 PDF", pdf.output(dest='S').encode('latin-1'), f"Relatorio_{nome_vend}.pdf", use_container_width=True)
+            btn_pdf = gerar_pdf_completo(df_pdf, nome_vend, data_sel.strftime('%d/%m/%Y'), fat_total_str, peso_total, qtd_pedidos)
+            st.download_button("📄 PDF", btn_pdf, f"Relatorio_{nome_vend}.pdf", use_container_width=True)
 
         # --- KPIs ---
         st.write("---")
         k1, k2, k3, k4 = st.columns(4)
-        total_venda = df_resumo['VALOR'].sum()
-        k1.metric("Faturamento", formatar_moeda(total_venda))
-        k2.metric("Peso Total", f"{df_filtrado['PESO_NUM'].sum():,.2f} kg".replace(".", ","))
-        k3.metric("Pedidos", len(df_resumo))
-        k4.metric("Ticket Médio", formatar_moeda(total_venda/len(df_resumo)))
+        k1.metric("Faturamento", fat_total_str)
+        k2.metric("Peso Total", f"{peso_total:,.2f} kg".replace(".", ","))
+        k3.metric("Pedidos", qtd_pedidos)
+        k4.metric("Ticket Médio", formatar_moeda(df_resumo['VALOR'].sum()/qtd_pedidos))
 
         # --- SEÇÃO DE GRÁFICOS ---
         st.write("### 📊 Análise Visual")
@@ -150,7 +201,6 @@ if df_fat is not None:
         with g1:
             st.write("**Top 5 Clientes (R$)**")
             top_clientes = df_resumo.nlargest(5, 'VALOR')
-            # Ajuste de altura dinâmica: alt.Step(40) impede que 1 barra fique "gigante"
             chart_cli = alt.Chart(top_clientes).mark_bar(color='#007bff', cornerRadiusEnd=5).encode(
                 x=alt.X('VALOR:Q', title='Valor Total', axis=alt.Axis(format=',.2f')),
                 y=alt.Y('CLIENTE:N', sort='-x', title=None),
@@ -164,20 +214,15 @@ if df_fat is not None:
             fatur_hora = df_resumo.groupby('HORA_SIMPLES')['VALOR'].sum().reset_index()
             chart_hora = alt.Chart(fatur_hora).mark_area(
                 line={'color':'#28a745'},
-                color=alt.Gradient(
-                    gradient='linear',
-                    stops=[alt.GradientStop(color='white', offset=0),
-                           alt.GradientStop(color='#28a745', offset=1)],
-                    x1=1, x2=1, y1=1, y2=0
-                )
+                color=alt.Gradient(gradient='linear', stops=[alt.GradientStop(color='white', offset=0), alt.GradientStop(color='#28a745', offset=1)], x1=1, x2=1, y1=1, y2=0)
             ).encode(
                 x=alt.X('HORA_SIMPLES:N', title='Hora do Dia'),
                 y=alt.Y('VALOR:Q', title='Total (R$)', axis=alt.Axis(format=',.2f')),
                 tooltip=[alt.Tooltip('HORA_SIMPLES:N', title='Hora'), alt.Tooltip('VALOR:Q', format=',.2f', title='Total')]
-            ).properties(height=200) # Altura fixa menor para ficar elegante
+            ).properties(height=160)
             st.altair_chart(chart_hora, use_container_width=True)
 
-        # --- TABELA DE DADOS (Busca removida) ---
+        # --- TABELA DE DADOS ---
         st.write("---")
         df_disp = df_resumo[['PEDIDO', 'COD_CLI', 'CLIENTE', 'VALOR', 'NFE', 'HORA']].copy()
         df_disp['VALOR'] = df_disp['VALOR'].apply(formatar_moeda)
@@ -200,11 +245,9 @@ if df_fat is not None:
             with c_det2: st.warning(f"**Coligação:** {df_itens.iloc[0, 6]}\n\n**NF-e:** {df_itens.iloc[0, 11]}")
             with c_det3: st.success(f"**Valor:** {formatar_moeda(df_itens['VALOR_NUM'].sum())}\n\n**Peso:** {df_itens['PESO_NUM'].sum():,.2f} kg".replace(".", ","))
 
-            # Tabela de itens com nomes de colunas limpos
             df_itens_det = df_itens.iloc[:, [13, 15, 7, 19, 20, 22]].copy()
             df_itens_det.columns = ['CÓDIGO', 'PRODUTO', 'FABRICANTE', 'CX', 'UN', 'VALOR']
             df_itens_det['VALOR'] = df_itens_det['VALOR'].apply(limpar_para_numero).apply(formatar_moeda)
-            
             st.dataframe(df_itens_det, hide_index=True, use_container_width=True)
     else:
-        st.info("Nenhum dado encontrado para os filtros selecionados.")
+        st.info("Nenhum dado encontrado.")
