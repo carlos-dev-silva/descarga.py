@@ -1,13 +1,17 @@
 import streamlit as st
 import pandas as pd
-from datetime import date
+from datetime import date, timedelta
 import re
 import io
 from fpdf import FPDF
 import altair as alt
 
-# Configuração da página
+# --- CONFIGURAÇÃO DA PÁGINA ---
 st.set_page_config(layout="wide", page_title="CCN - Business Intelligence", page_icon="📈")
+
+# --- CONEXÃO SQL ---
+# O Streamlit buscará automaticamente as credenciais em .streamlit/secrets.toml
+conn = st.connection("sql")
 
 # --- ESTILIZAÇÃO CSS ---
 st.markdown("""
@@ -24,7 +28,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- CLASSE PDF PROFISSIONAL (Ajustada para não vir em branco) ---
+# --- CLASSE PDF PROFISSIONAL ---
 class PDF(FPDF):
     def header(self):
         try: self.image('sem_fundo.png', 10, 8, 33)
@@ -40,19 +44,8 @@ class PDF(FPDF):
 
 # --- FUNÇÕES DE APOIO ---
 def formatar_moeda(valor):
-    try:
-        val = float(valor)
-        return f"R$ {val:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    try: return f"R$ {float(valor):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
     except: return "R$ 0,00"
-
-def limpar_para_numero(valor):
-    if pd.isna(valor): return 0.0
-    s = str(valor).strip().replace('R$', '').replace(' ', '')
-    try:
-        if ',' in s and '.' in s: s = s.replace('.', '').replace(',', '.')
-        elif ',' in s: s = s.replace(',', '.')
-        return float(s)
-    except: return 0.0
 
 def gerar_pdf_completo(df, vendedor, data_doc, faturamento, peso, qtd):
     pdf = PDF()
@@ -62,7 +55,7 @@ def gerar_pdf_completo(df, vendedor, data_doc, faturamento, peso, qtd):
     pdf.cell(190, 10, f" Vendedor: {vendedor} | Data: {data_doc}", 1, 1, 'L', fill=True)
     pdf.ln(5)
     
-    # Resumo
+    # Resumo do PDF
     pdf.set_font('Arial', 'B', 11)
     pdf.cell(63, 10, "Faturamento", 1, 0, 'C'); pdf.cell(63, 10, "Peso", 1, 0, 'C'); pdf.cell(64, 10, "Pedidos", 1, 1, 'C')
     pdf.set_font('Arial', '', 10)
@@ -71,7 +64,7 @@ def gerar_pdf_completo(df, vendedor, data_doc, faturamento, peso, qtd):
     pdf.cell(64, 10, str(qtd), 1, 1, 'C')
     pdf.ln(10)
 
-    # Tabela
+    # Cabeçalho da Tabela
     pdf.set_fill_color(0, 51, 102); pdf.set_text_color(255, 255, 255); pdf.set_font('Arial', 'B', 9)
     cols = [("PEDIDO", 20), ("COD", 20), ("CLIENTE", 90), ("VALOR", 30), ("HORA", 30)]
     for txt, w in cols: pdf.cell(w, 10, txt, 1, 0, 'C', fill=True)
@@ -86,127 +79,171 @@ def gerar_pdf_completo(df, vendedor, data_doc, faturamento, peso, qtd):
         pdf.cell(30, 8, str(row['VALOR']), 1, 0, 'C', fill=fill)
         pdf.cell(30, 8, str(row['HORA']), 1, 1, 'C', fill=fill)
     
-    # Retorno seguro como bytes
     res = pdf.output(dest='S')
     return res.encode('latin-1') if isinstance(res, str) else res
 
-@st.cache_data
-def load_data():
-    try:
-        df_f = pd.read_csv("Faturamento.csv", sep=";", encoding='latin-1', dtype=str) 
-        df_v = pd.read_csv("Vendedores.csv", sep=";", encoding='latin-1', dtype=str)
-        df_f['DATA_FILTRO'] = pd.to_datetime(df_f.iloc[:, 9], dayfirst=True, errors='coerce')
-        df_f['VALOR_NUM'] = df_f.iloc[:, 22].apply(limpar_para_numero)
-        df_f['PESO_NUM'] = df_f.iloc[:, 26].apply(limpar_para_numero)
-        
-        def remover_fabricante(row):
-            prod, fab = str(row.iloc[15]).strip(), str(row.iloc[7]).strip()
-            if fab.lower() in prod.lower():
-                return re.sub(re.escape(fab), '', prod, flags=re.IGNORECASE).replace(' - ', ' ').strip()
-            return prod
-        df_f.iloc[:, 15] = df_f.apply(remover_fabricante, axis=1)
-        return df_f.dropna(subset=['DATA_FILTRO']), df_v
-    except Exception as e:
-        st.error(f"Erro: {e}"); return None, None
+# --- CARREGAMENTO DE DADOS (SQL) ---
 
-df_fat, df_vend = load_data()
+@st.cache_data(ttl=3600)
+def load_vendedores():
+    query = """
+    SELECT DISTINCT vend.cd_vend AS [Cod_Vendedor], vend.nome AS [Vendedor]
+    FROM vendedor vend
+    INNER JOIN categ ct ON ct.categ = vend.categ
+    WHERE vend.ativo = 1 AND vend.categ IN ('11','13','14','23','28','31','25','12','18','7')
+    ORDER BY vend.nome
+    """
+    return conn.query(query)
 
-if df_fat is not None:
-    with st.sidebar:
-        try: st.image("sem_fundo.png", use_container_width=True)
-        except: pass
-        st.write("---")
-        data_sel = st.date_input("🗓️ Data da Descarga", value=date(2026, 3, 10), format="DD/MM/YYYY")
-        vendedores = sorted(df_vend.iloc[:, 1].dropna().unique().tolist())
-        nome_vend = st.selectbox("👤 Vendedor", vendedores)
-        cod_vend = str(df_vend[df_vend.iloc[:, 1] == nome_vend].iloc[0, 0]).strip()
-        st.divider(); st.caption("v4.3 - CCN Intelligence")
+@st.cache_data(ttl=600)
+def load_faturamento(dt_inicio, dt_fim):
+    # Query unificada com base no seu script original
+    query = f"""
+    SELECT
+        cl.cd_clien AS [Cod_Cliente], v.cd_vend AS [Cod_Vendedor], v.nome AS [Vendedor],
+        cl.nome AS [Cliente], (SELECT co.descricao FROM coligacao co WHERE co.cd_coligacao = cl.cd_coligacao) AS [Coligacao],
+        f.descricao AS [Fabricante],
+        (SELECT MIN(ev.dt_criacao) FROM VI_evento ev WHERE ev.nu_ped = p.nu_ped AND ev.cd_fila = 'CAPV') AS [Horario_Descarga],
+        p.dt_cad AS [Dt_Pedido], p.nu_ped AS [Pedido], ISNULL(CAST(n.nu_nf_emp_fat AS VARCHAR), 'SEM NOTA') AS [NFe],
+        prod.cd_prod AS [Cod_Prod], prod.descricao AS [Produto], it.vl_venda AS [Valor_Total_Item],
+        ((FLOOR(it.qtde / NULLIF(prod.qtde_unid_cmp, 0)) * (prod.qtde_unid_cmp * prod.peso_liq)) + 
+        ((CAST(CAST(it.qtde AS INT) % CAST(NULLIF(prod.qtde_unid_cmp, 0) AS INT) AS INT)) * prod.peso_liq)) AS [Peso_Total_Real],
+        it.qtde AS [Qtd_Total], it.preco_unit AS [Preco_Unit], 
+        FLOOR(it.qtde / NULLIF(prod.qtde_unid_cmp, 0)) AS [CX],
+        CAST(CAST(it.qtde AS INT) % CAST(NULLIF(prod.qtde_unid_cmp, 0) AS INT) AS INT) AS [UN]
+    FROM ped_vda p
+    INNER JOIN it_pedv it ON it.nu_ped = p.nu_ped AND it.cd_emp = p.cd_emp
+    INNER JOIN cliente cl ON cl.cd_clien = p.cd_clien
+    INNER JOIN vendedor v ON v.cd_vend = p.cd_vend
+    INNER JOIN produto prod ON prod.cd_prod = it.cd_prod
+    INNER JOIN fabric f ON f.cd_fabric = prod.cd_fabric
+    LEFT JOIN nota n ON n.nu_ped = p.nu_ped AND n.cd_emp = p.cd_emp
+    WHERE p.cd_emp = 2 
+      AND p.dt_cad BETWEEN '{dt_inicio}' AND '{dt_fim}'
+      AND it.situacao IN ('FA', 'AB')
+    """
+    df = conn.query(query)
+    if not df.empty:
+        # Tratamento de data de descarga para filtro
+        df['DATA_FILTRO'] = pd.to_datetime(df['Horario_Descarga']).dt.date
+        df['HORA_STR'] = pd.to_datetime(df['Horario_Descarga']).dt.strftime('%H:%M')
+    return df
 
-    mask = (df_fat['DATA_FILTRO'].dt.date == data_sel) & \
-           ((df_fat.iloc[:, 1].astype(str).str.strip() == cod_vend) | (df_fat.iloc[:, 2].astype(str).str.strip() == nome_vend))
+# --- LÓGICA PRINCIPAL ---
+
+df_vendedores = load_vendedores()
+
+with st.sidebar:
+    try: st.image("sem_fundo.png", use_container_width=True)
+    except: pass
+    st.write("---")
+    # Data de visualização
+    data_sel = st.date_input("🗓️ Data da Descarga", value=date.today())
     
-    df_filtrado = df_fat[mask].copy()
-    df_filtrado = df_filtrado.drop_duplicates(subset=[df_filtrado.columns[10], df_filtrado.columns[15]])
+    # Seleção de Vendedor
+    vendedor_lista = sorted(df_vendedores['Vendedor'].unique())
+    nome_vend = st.selectbox("👤 Vendedor", vendedor_lista)
+    cod_vend_selecionado = df_vendedores[df_vendedores['Vendedor'] == nome_vend]['Cod_Vendedor'].iloc[0]
+    
+    st.divider(); st.caption("v5.0 - CCN Intelligence SQL")
+
+# Buscamos um range de 3 dias no banco para garantir que pegamos pedidos criados antes mas descarregados hoje
+df_raw = load_faturamento(data_sel - timedelta(days=2), data_sel)
+
+if not df_raw.empty:
+    # Filtro local por data de descarga e vendedor
+    mask = (df_raw['DATA_FILTRO'] == data_sel) & (df_raw['Cod_Vendedor'].astype(str).str.strip() == str(cod_vend_selecionado).strip())
+    df_filtrado = df_raw[mask].copy()
 
     if not df_filtrado.empty:
-        df_resumo = df_filtrado.groupby(df_filtrado.columns[10]).agg({
-            df_filtrado.columns[0]: 'first', df_filtrado.columns[5]: 'first',
-            'VALOR_NUM': 'sum', df_filtrado.columns[11]: 'first', 
-            df_filtrado.columns[8]: 'first', df_filtrado.columns[6]: 'first'  
+        # Agrupamento para o Resumo de Pedidos (Nível Pedido)
+        df_resumo = df_filtrado.groupby('Pedido').agg({
+            'Cod_Cliente': 'first', 'Cliente': 'first', 'Valor_Total_Item': 'sum', 
+            'NFe': 'first', 'HORA_STR': 'first', 'Coligacao': 'first'
         }).reset_index()
         df_resumo.columns = ['PEDIDO', 'COD_CLI', 'CLIENTE', 'VALOR', 'NFE', 'HORA', 'COLIGACAO']
 
-        # Cabeçalho
+        # --- CABEÇALHO ---
         h1, h2, h3 = st.columns([4, 1, 1])
         with h1:
             st.title("🚀 Performance de Vendas")
             st.write(f"Vendedor: **{nome_vend}** | **{data_sel.strftime('%d/%m/%Y')}**")
         
-        fat_tot_str = formatar_moeda(df_resumo['VALOR'].sum())
-        peso_tot = df_filtrado['PESO_NUM'].sum()
-        
+        fat_tot_val = df_resumo['VALOR'].sum()
+        peso_tot_val = df_filtrado['Peso_Total_Real'].sum()
+
         with h2:
             st.write("##")
             out_ex = io.BytesIO()
-            df_resumo[['PEDIDO', 'COD_CLI', 'CLIENTE', 'VALOR', 'NFE', 'HORA']].to_excel(out_ex, index=False)
+            df_resumo.to_excel(out_ex, index=False)
             st.download_button("📥 Excel", out_ex.getvalue(), f"Resumo_{nome_vend}.xlsx", use_container_width=True)
         with h3:
             st.write("##")
-            df_pdf = df_resumo.copy()
-            df_pdf['VALOR'] = df_pdf['VALOR'].apply(formatar_moeda)
-            btn_pdf = gerar_pdf_completo(df_pdf, nome_vend, data_sel.strftime('%d/%m/%Y'), fat_tot_str, peso_tot, len(df_resumo))
+            df_pdf_data = df_resumo.copy()
+            df_pdf_data['VALOR'] = df_pdf_data['VALOR'].apply(formatar_moeda)
+            btn_pdf = gerar_pdf_completo(df_pdf_data, nome_vend, data_sel.strftime('%d/%m/%Y'), formatar_moeda(fat_tot_val), peso_tot_val, len(df_resumo))
             st.download_button("📄 PDF", btn_pdf, f"Relatorio_{nome_vend}.pdf", use_container_width=True)
 
-        # KPIs
+        # --- KPIs ---
         st.write("---")
         k1, k2, k3, k4 = st.columns(4)
-        k1.metric("Faturamento", fat_tot_str)
-        k2.metric("Peso Total", f"{peso_tot:,.2f} kg".replace(".", ","))
+        k1.metric("Faturamento", formatar_moeda(fat_tot_val))
+        k2.metric("Peso Total", f"{peso_tot_val:,.2f} kg".replace(".", ","))
         k3.metric("Pedidos", len(df_resumo))
-        k4.metric("Ticket Médio", formatar_moeda(df_resumo['VALOR'].sum()/len(df_resumo)))
+        k4.metric("Ticket Médio", formatar_moeda(fat_tot_val/len(df_resumo)))
 
-        # Gráficos
+        # --- GRÁFICOS ---
         st.write("### 📊 Análise Visual")
         g1, g2 = st.columns(2)
         with g1:
             st.write("**Top 5 Clientes (R$)**")
             top_cli = df_resumo.nlargest(5, 'VALOR').copy()
-            top_cli['VALOR_BR'] = top_cli['VALOR'].apply(formatar_moeda)
             chart_cli = alt.Chart(top_cli).mark_bar(color='#007bff', cornerRadiusEnd=5).encode(
-                x=alt.X('VALOR:Q', title='Total (R$)', axis=alt.Axis(format='.2f')),
+                x=alt.X('VALOR:Q', title='Total (R$)'),
                 y=alt.Y('CLIENTE:N', sort='-x', title=None),
-                tooltip=[alt.Tooltip('CLIENTE:N', title='Cliente'), alt.Tooltip('VALOR_BR:N', title='Faturamento')]
-            ).properties(height=alt.Step(40))
+                tooltip=['CLIENTE', 'VALOR']
+            ).properties(height=200)
             st.altair_chart(chart_cli, use_container_width=True)
         with g2:
             st.write("**Faturamento por Hora**")
-            df_resumo['HORA_FORMATADA'] = df_resumo['HORA'].str[:2] + ":00h"
-            fatur_h = df_resumo.groupby('HORA_FORMATADA')['VALOR'].sum().reset_index()
+            df_resumo['H_INDEX'] = df_resumo['HORA'].str[:2] + ":00h"
+            fatur_h = df_resumo.groupby('H_INDEX')['VALOR'].sum().reset_index()
             chart_h = alt.Chart(fatur_h).mark_area(line={'color':'#28a745'}, color=alt.Gradient(gradient='linear', stops=[alt.GradientStop(color='white', offset=0), alt.GradientStop(color='#28a745', offset=1)], x1=1, x2=1, y1=1, y2=0)).encode(
-                x=alt.X('HORA_FORMATADA:N', title='Hora do Dia', sort=None),
-                y=alt.Y('VALOR:Q', title='Total (R$)', axis=alt.Axis(format='.2f')),
-                tooltip=[alt.Tooltip('HORA_FORMATADA:N', title='Horário'), alt.Tooltip('VALOR:Q', format=',.2f', title='Total (R$)')]
-            ).properties(height=160)
+                x=alt.X('H_INDEX:N', title='Hora'),
+                y=alt.Y('VALOR:Q', title='Total (R$)')
+            ).properties(height=200)
             st.altair_chart(chart_h, use_container_width=True)
 
-        # Tabela
+        # --- TABELA PRINCIPAL ---
         st.write("---")
         df_disp = df_resumo[['PEDIDO', 'COD_CLI', 'CLIENTE', 'VALOR', 'NFE', 'HORA']].copy()
         df_disp['VALOR'] = df_disp['VALOR'].apply(formatar_moeda)
-        sel = st.dataframe(df_disp, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row", column_config={"CLIENTE": st.column_config.TextColumn("Cliente", width=600)})
+        
+        sel = st.dataframe(
+            df_disp, 
+            use_container_width=True, 
+            hide_index=True, 
+            on_select="rerun", 
+            selection_mode="single-row",
+            column_config={"CLIENTE": st.column_config.TextColumn("Cliente", width=600)}
+        )
 
-        # Detalhe
+        # --- DETALHE DO PEDIDO SELECIONADO ---
         if sel.get("selection", {}).get("rows"):
             idx = sel["selection"]["rows"][0]
             num_ped = df_resumo.iloc[idx]['PEDIDO']
-            df_it = df_filtrado[df_filtrado.iloc[:, 10] == num_ped]
-            st.write("###")
+            df_it = df_filtrado[df_filtrado['Pedido'] == num_ped]
+            
+            st.write("### 📦 Detalhes do Pedido")
             c_d1, c_d2, c_d3 = st.columns(3)
-            with c_d1: st.info(f"**Cliente:** {df_it.iloc[0, 5]}\n\n**Pedido:** {num_ped}")
-            with c_d2: st.warning(f"**Coligação:** {df_it.iloc[0, 6]}\n\n**NF-e:** {df_it.iloc[0, 11]}")
-            with c_d3: st.success(f"**Valor:** {formatar_moeda(df_it['VALOR_NUM'].sum())}\n\n**Peso:** {df_it['PESO_NUM'].sum():,.2f} kg".replace(".", ","))
-            df_it_det = df_it.iloc[:, [13, 15, 7, 19, 20, 22]].copy()
+            with c_d1: st.info(f"**Cliente:** {df_it.iloc[0]['Cliente']}\n\n**Pedido:** {num_ped}")
+            with c_d2: st.warning(f"**Coligação:** {df_it.iloc[0]['Coligacao']}\n\n**NF-e:** {df_it.iloc[0]['NFe']}")
+            with c_d3: st.success(f"**Valor:** {formatar_moeda(df_it['Valor_Total_Item'].sum())}\n\n**Peso:** {df_it['Peso_Total_Real'].sum():,.2f} kg".replace(".", ","))
+            
+            df_it_det = df_it[['Cod_Prod', 'Produto', 'Fabricante', 'CX', 'UN', 'Valor_Total_Item']].copy()
             df_it_det.columns = ['CÓDIGO', 'PRODUTO', 'FABRICANTE', 'CX', 'UN', 'VALOR']
-            df_it_det['VALOR'] = df_it_det['VALOR'].apply(limpar_para_numero).apply(formatar_moeda)
+            df_it_det['VALOR'] = df_it_det['VALOR'].apply(formatar_moeda)
             st.dataframe(df_it_det, hide_index=True, use_container_width=True)
-    else: st.info("Nenhum dado encontrado.")
+            
+    else: st.info(f"Nenhum dado de descarga para {nome_vend} nesta data.")
+else: st.error("Não foi possível conectar ao banco ou não há dados no período.")
