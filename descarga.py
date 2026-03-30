@@ -10,7 +10,6 @@ import altair as alt
 st.set_page_config(layout="wide", page_title="CCN - Business Intelligence", page_icon="📈")
 
 # --- CONEXÃO SQL ---
-# O Streamlit buscará automaticamente as credenciais em .streamlit/secrets.toml
 conn = st.connection("sql")
 
 # --- ESTILIZAÇÃO CSS ---
@@ -55,7 +54,6 @@ def gerar_pdf_completo(df, vendedor, data_doc, faturamento, peso, qtd):
     pdf.cell(190, 10, f" Vendedor: {vendedor} | Data: {data_doc}", 1, 1, 'L', fill=True)
     pdf.ln(5)
     
-    # Resumo do PDF
     pdf.set_font('Arial', 'B', 11)
     pdf.cell(63, 10, "Faturamento", 1, 0, 'C'); pdf.cell(63, 10, "Peso", 1, 0, 'C'); pdf.cell(64, 10, "Pedidos", 1, 1, 'C')
     pdf.set_font('Arial', '', 10)
@@ -64,7 +62,6 @@ def gerar_pdf_completo(df, vendedor, data_doc, faturamento, peso, qtd):
     pdf.cell(64, 10, str(qtd), 1, 1, 'C')
     pdf.ln(10)
 
-    # Cabeçalho da Tabela
     pdf.set_fill_color(0, 51, 102); pdf.set_text_color(255, 255, 255); pdf.set_font('Arial', 'B', 9)
     cols = [("PEDIDO", 20), ("COD", 20), ("CLIENTE", 90), ("VALOR", 30), ("HORA", 30)]
     for txt, w in cols: pdf.cell(w, 10, txt, 1, 0, 'C', fill=True)
@@ -97,7 +94,6 @@ def load_vendedores():
 
 @st.cache_data(ttl=600)
 def load_faturamento(dt_inicio, dt_fim):
-    # Query unificada com base no seu script original
     query = f"""
     SELECT
         cl.cd_clien AS [Cod_Cliente], v.cd_vend AS [Cod_Vendedor], v.nome AS [Vendedor],
@@ -124,126 +120,112 @@ def load_faturamento(dt_inicio, dt_fim):
     """
     df = conn.query(query)
     if not df.empty:
-        # Tratamento de data de descarga para filtro
         df['DATA_FILTRO'] = pd.to_datetime(df['Horario_Descarga']).dt.date
         df['HORA_STR'] = pd.to_datetime(df['Horario_Descarga']).dt.strftime('%H:%M')
     return df
 
-# --- LÓGICA PRINCIPAL ---
+# --- INTERFACE PRINCIPAL ---
 
 df_vendedores = load_vendedores()
 
-with st.sidebar:
-    try: st.image("sem_fundo.png", use_container_width=True)
-    except: pass
-    st.write("---")
-    # Data de visualização
-    data_sel = st.date_input("🗓️ Data da Descarga", value=date.today())
-    
-    # Seleção de Vendedor
-    vendedor_lista = sorted(df_vendedores['Vendedor'].unique())
-    nome_vend = st.selectbox("👤 Vendedor", vendedor_lista)
-    cod_vend_selecionado = df_vendedores[df_vendedores['Vendedor'] == nome_vend]['Cod_Vendedor'].iloc[0]
-    
-    st.divider(); st.caption("v5.0 - CCN Intelligence SQL")
-
-# Buscamos um range de 3 dias no banco para garantir que pegamos pedidos criados antes mas descarregados hoje
-df_raw = load_faturamento(data_sel - timedelta(days=2), data_sel)
-
-if not df_raw.empty:
-    # Filtro local por data de descarga e vendedor
-    mask = (df_raw['DATA_FILTRO'] == data_sel) & (df_raw['Cod_Vendedor'].astype(str).str.strip() == str(cod_vend_selecionado).strip())
-    df_filtrado = df_raw[mask].copy()
-
-    if not df_filtrado.empty:
-        # Agrupamento para o Resumo de Pedidos (Nível Pedido)
-        df_resumo = df_filtrado.groupby('Pedido').agg({
-            'Cod_Cliente': 'first', 'Cliente': 'first', 'Valor_Total_Item': 'sum', 
-            'NFe': 'first', 'HORA_STR': 'first', 'Coligacao': 'first'
-        }).reset_index()
-        df_resumo.columns = ['PEDIDO', 'COD_CLI', 'CLIENTE', 'VALOR', 'NFE', 'HORA', 'COLIGACAO']
-
-        # --- CABEÇALHO ---
-        h1, h2, h3 = st.columns([4, 1, 1])
-        with h1:
-            st.title("🚀 Performance de Vendas")
-            st.write(f"Vendedor: **{nome_vend}** | **{data_sel.strftime('%d/%m/%Y')}**")
-        
-        fat_tot_val = df_resumo['VALOR'].sum()
-        peso_tot_val = df_filtrado['Peso_Total_Real'].sum()
-
-        with h2:
-            st.write("##")
-            out_ex = io.BytesIO()
-            df_resumo.to_excel(out_ex, index=False)
-            st.download_button("📥 Excel", out_ex.getvalue(), f"Resumo_{nome_vend}.xlsx", use_container_width=True)
-        with h3:
-            st.write("##")
-            df_pdf_data = df_resumo.copy()
-            df_pdf_data['VALOR'] = df_pdf_data['VALOR'].apply(formatar_moeda)
-            btn_pdf = gerar_pdf_completo(df_pdf_data, nome_vend, data_sel.strftime('%d/%m/%Y'), formatar_moeda(fat_tot_val), peso_tot_val, len(df_resumo))
-            st.download_button("📄 PDF", btn_pdf, f"Relatorio_{nome_vend}.pdf", use_container_width=True)
-
-        # --- KPIs ---
+if not df_vendedores.empty:
+    with st.sidebar:
+        try: st.image("sem_fundo.png", use_container_width=True)
+        except: pass
         st.write("---")
-        k1, k2, k3, k4 = st.columns(4)
-        k1.metric("Faturamento", formatar_moeda(fat_tot_val))
-        k2.metric("Peso Total", f"{peso_tot_val:,.2f} kg".replace(".", ","))
-        k3.metric("Pedidos", len(df_resumo))
-        k4.metric("Ticket Médio", formatar_moeda(fat_tot_val/len(df_resumo)))
-
-        # --- GRÁFICOS ---
-        st.write("### 📊 Análise Visual")
-        g1, g2 = st.columns(2)
-        with g1:
-            st.write("**Top 5 Clientes (R$)**")
-            top_cli = df_resumo.nlargest(5, 'VALOR').copy()
-            chart_cli = alt.Chart(top_cli).mark_bar(color='#007bff', cornerRadiusEnd=5).encode(
-                x=alt.X('VALOR:Q', title='Total (R$)'),
-                y=alt.Y('CLIENTE:N', sort='-x', title=None),
-                tooltip=['CLIENTE', 'VALOR']
-            ).properties(height=200)
-            st.altair_chart(chart_cli, use_container_width=True)
-        with g2:
-            st.write("**Faturamento por Hora**")
-            df_resumo['H_INDEX'] = df_resumo['HORA'].str[:2] + ":00h"
-            fatur_h = df_resumo.groupby('H_INDEX')['VALOR'].sum().reset_index()
-            chart_h = alt.Chart(fatur_h).mark_area(line={'color':'#28a745'}, color=alt.Gradient(gradient='linear', stops=[alt.GradientStop(color='white', offset=0), alt.GradientStop(color='#28a745', offset=1)], x1=1, x2=1, y1=1, y2=0)).encode(
-                x=alt.X('H_INDEX:N', title='Hora'),
-                y=alt.Y('VALOR:Q', title='Total (R$)')
-            ).properties(height=200)
-            st.altair_chart(chart_h, use_container_width=True)
-
-        # --- TABELA PRINCIPAL ---
-        st.write("---")
-        df_disp = df_resumo[['PEDIDO', 'COD_CLI', 'CLIENTE', 'VALOR', 'NFE', 'HORA']].copy()
-        df_disp['VALOR'] = df_disp['VALOR'].apply(formatar_moeda)
+        data_sel = st.date_input("🗓️ Data da Descarga", value=date.today())
         
-        sel = st.dataframe(
-            df_disp, 
-            use_container_width=True, 
-            hide_index=True, 
-            on_select="rerun", 
-            selection_mode="single-row",
-            column_config={"CLIENTE": st.column_config.TextColumn("Cliente", width=600)}
-        )
+        vendedor_lista = sorted(df_vendedores['Vendedor'].unique())
+        nome_vend = st.selectbox("👤 Vendedor", vendedor_lista)
+        cod_vend_sel = df_vendedores[df_vendedores['Vendedor'] == nome_vend]['Cod_Vendedor'].iloc[0]
+        
+        st.divider(); st.caption("v5.1 - CCN Intelligence SQL")
 
-        # --- DETALHE DO PEDIDO SELECIONADO ---
-        if sel.get("selection", {}).get("rows"):
-            idx = sel["selection"]["rows"][0]
-            num_ped = df_resumo.iloc[idx]['PEDIDO']
-            df_it = df_filtrado[df_filtrado['Pedido'] == num_ped]
+    # Range de busca no SQL
+    df_raw = load_faturamento(data_sel - timedelta(days=3), data_sel)
+
+    if not df_raw.empty:
+        # Filtro refinado
+        mask = (df_raw['DATA_FILTRO'] == data_sel) & (df_raw['Cod_Vendedor'].astype(str).str.strip() == str(cod_vend_sel).strip())
+        df_filtrado = df_raw[mask].copy()
+
+        if not df_filtrado.empty:
+            df_resumo = df_filtrado.groupby('Pedido').agg({
+                'Cod_Cliente': 'first', 'Cliente': 'first', 'Valor_Total_Item': 'sum', 
+                'NFe': 'first', 'HORA_STR': 'first', 'Coligacao': 'first'
+            }).reset_index()
+            df_resumo.columns = ['PEDIDO', 'COD_CLI', 'CLIENTE', 'VALOR', 'NFE', 'HORA', 'COLIGACAO']
+
+            # Cabeçalho
+            h1, h2, h3 = st.columns([4, 1, 1])
+            with h1:
+                st.title("🚀 Performance de Vendas")
+                st.write(f"Vendedor: **{nome_vend}** | **{data_sel.strftime('%d/%m/%Y')}**")
             
-            st.write("### 📦 Detalhes do Pedido")
-            c_d1, c_d2, c_d3 = st.columns(3)
-            with c_d1: st.info(f"**Cliente:** {df_it.iloc[0]['Cliente']}\n\n**Pedido:** {num_ped}")
-            with c_d2: st.warning(f"**Coligação:** {df_it.iloc[0]['Coligacao']}\n\n**NF-e:** {df_it.iloc[0]['NFe']}")
-            with c_d3: st.success(f"**Valor:** {formatar_moeda(df_it['Valor_Total_Item'].sum())}\n\n**Peso:** {df_it['Peso_Total_Real'].sum():,.2f} kg".replace(".", ","))
-            
-            df_it_det = df_it[['Cod_Prod', 'Produto', 'Fabricante', 'CX', 'UN', 'Valor_Total_Item']].copy()
-            df_it_det.columns = ['CÓDIGO', 'PRODUTO', 'FABRICANTE', 'CX', 'UN', 'VALOR']
-            df_it_det['VALOR'] = df_it_det['VALOR'].apply(formatar_moeda)
-            st.dataframe(df_it_det, hide_index=True, use_container_width=True)
-            
-    else: st.info(f"Nenhum dado de descarga para {nome_vend} nesta data.")
-else: st.error("Não foi possível conectar ao banco ou não há dados no período.")
+            fat_tot = df_resumo['VALOR'].sum()
+            peso_tot = df_filtrado['Peso_Total_Real'].sum()
+
+            with h2:
+                st.write("##")
+                out_ex = io.BytesIO()
+                df_resumo.to_excel(out_ex, index=False)
+                st.download_button("📥 Excel", out_ex.getvalue(), f"Resumo_{nome_vend}.xlsx", use_container_width=True)
+            with h3:
+                st.write("##")
+                df_pdf_data = df_resumo.copy()
+                df_pdf_data['VALOR'] = df_pdf_data['VALOR'].apply(formatar_moeda)
+                btn_pdf = gerar_pdf_completo(df_pdf_data, nome_vend, data_sel.strftime('%d/%m/%Y'), formatar_moeda(fat_tot), peso_tot, len(df_resumo))
+                st.download_button("📄 PDF", btn_pdf, f"Relatorio_{nome_vend}.pdf", use_container_width=True)
+
+            # KPIs
+            st.write("---")
+            k1, k2, k3, k4 = st.columns(4)
+            k1.metric("Faturamento", formatar_moeda(fat_tot))
+            k2.metric("Peso Total", f"{peso_tot:,.2f} kg".replace(".", ","))
+            k3.metric("Pedidos", len(df_resumo))
+            k4.metric("Ticket Médio", formatar_moeda(fat_tot/len(df_resumo)) if len(df_resumo) > 0 else 0)
+
+            # Gráficos
+            st.write("### 📊 Análise Visual")
+            g1, g2 = st.columns(2)
+            with g1:
+                st.write("**Top 5 Clientes (R$)**")
+                top_cli = df_resumo.nlargest(5, 'VALOR').copy()
+                chart_cli = alt.Chart(top_cli).mark_bar(color='#007bff', cornerRadiusEnd=5).encode(
+                    x=alt.X('VALOR:Q', title='Total (R$)'),
+                    y=alt.Y('CLIENTE:N', sort='-x', title=None),
+                    tooltip=['CLIENTE', 'VALOR']
+                ).properties(height=200)
+                st.altair_chart(chart_cli, use_container_width=True)
+            with g2:
+                st.write("**Faturamento por Hora**")
+                df_resumo['H_INDEX'] = df_resumo['HORA'].str[:2] + ":00h"
+                fatur_h = df_resumo.groupby('H_INDEX')['VALOR'].sum().reset_index()
+                chart_h = alt.Chart(fatur_h).mark_area(line={'color':'#28a745'}, color=alt.Gradient(gradient='linear', stops=[alt.GradientStop(color='white', offset=0), alt.GradientStop(color='#28a745', offset=1)], x1=1, x2=1, y1=1, y2=0)).encode(
+                    x=alt.X('H_INDEX:N', title='Hora'),
+                    y=alt.Y('VALOR:Q', title='Total (R$)')
+                ).properties(height=200)
+                st.altair_chart(chart_h, use_container_width=True)
+
+            # Tabela
+            st.write("---")
+            df_disp = df_resumo[['PEDIDO', 'COD_CLI', 'CLIENTE', 'VALOR', 'NFE', 'HORA']].copy()
+            df_disp['VALOR'] = df_disp['VALOR'].apply(formatar_moeda)
+            sel = st.dataframe(df_disp, use_container_width=True, hide_index=True, on_select="rerun", selection_mode="single-row")
+
+            if sel.get("selection", {}).get("rows"):
+                idx = sel["selection"]["rows"][0]
+                num_ped = df_resumo.iloc[idx]['PEDIDO']
+                df_it = df_filtrado[df_filtrado['Pedido'] == num_ped]
+                st.write("### 📦 Detalhes do Pedido")
+                st.info(f"**Cliente:** {df_it.iloc[0]['Cliente']} | **Pedido:** {num_ped}")
+                df_it_det = df_it[['Cod_Prod', 'Produto', 'Fabricante', 'CX', 'UN', 'Valor_Total_Item']].copy()
+                df_it_det.columns = ['CÓDIGO', 'PRODUTO', 'FABRICANTE', 'CX', 'UN', 'VALOR']
+                df_it_det['VALOR'] = df_it_det['VALOR'].apply(formatar_moeda)
+                st.dataframe(df_it_det, hide_index=True, use_container_width=True)
+        else:
+            st.info(f"Nenhum dado de descarga para {nome_vend} em {data_sel.strftime('%d/%m/%Y')}.")
+    else:
+        st.warning("Sem dados no banco para o período selecionado.")
+else:
+    st.error("Erro: Não foi possível carregar a lista de vendedores. Verifique o IP e a Porta 1433.")
