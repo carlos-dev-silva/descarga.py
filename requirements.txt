@@ -1,7 +1,4 @@
-streamlit
 pandas
+xlsxwriter
 fpdf
-openpyxl
-sqlalchemy
-pymssql
 altair
